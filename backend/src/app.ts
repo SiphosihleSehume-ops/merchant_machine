@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { prisma } from './lib/prisma.js'; // Note the .js extension for ESM
 import merchantRoutes from './routes/merchant.routes.js';
 import invoiceRoutes from './routes/invoice.routes.js';
+import x402Routes from './routes/x402.routes.js'; // <-- ADDED MISSING IMPORT
 
 // Load environment variables from .env file
 dotenv.config();
@@ -21,7 +22,7 @@ app.use(cors());
 app.use(express.json());
 
 // ==========================================
-// ROUTES
+// CORE ROUTES
 // ==========================================
 
 // 1. Health Check Endpoint
@@ -32,8 +33,6 @@ app.get('/health', (req, res) => {
     message: 'Merchant Machine API is running' 
   });
 });
-
-app.use('/api/v1/invoices', invoiceRoutes);
 
 // 2. Database Connection Test
 // Used to verify Express can successfully talk to Neon via Prisma
@@ -56,9 +55,13 @@ app.get('/api/v1/db-status', async (req, res) => {
   }
 });
 
-// 3. Feature Routes
-app.use('/api/v1/merchants', merchantRoutes); // <-- NEW ROUTE MOUNTED HERE
-// app.use('/api/v1/invoices', invoiceRoutes); // (Coming next)
+// ==========================================
+// FEATURE ROUTES
+// ==========================================
+
+app.use('/api/v1/merchants', merchantRoutes);
+app.use('/api/v1/invoices', invoiceRoutes); // <-- CLEANED UP (removed duplicate)
+app.use('/api/v1/x402', x402Routes);       // <-- ADDED X402 ROUTES
 
 // ==========================================
 // ERROR HANDLING

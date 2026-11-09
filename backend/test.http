@@ -1,3 +1,4 @@
+### 1. Register Merchant (Already done, but here for reference)
 POST http://localhost:4000/api/v1/merchants/register
 Content-Type: application/json
 
@@ -8,7 +9,7 @@ Content-Type: application/json
   "cryptoWallet": "0x1234567890abcdef1234567890abcdef12345678"
 }
 
-### Create Invoice
+### 2. Create Invoice
 POST http://localhost:4000/api/v1/invoices
 Content-Type: application/json
 
@@ -27,4 +28,25 @@ Content-Type: application/json
       "unitPrice": 45.00
     }
   ]
+}
+
+### 3. Create x402 Intent (MUST DO BEFORE SETTLING)
+POST http://localhost:4000/api/v1/x402/intent
+Content-Type: application/json
+
+{
+  "invoiceId": "d9ff1d30-a625-4381-bff0-cf73b97f70d7",
+  "network": "eip155:84532",
+  "payTo": "0x1234567890abcdef1234567890abcdef12345678"
+}
+
+### 4. Request Payment (Simulate Scanning QR)
+GET http://localhost:4000/api/v1/x402/pay/d9ff1d30-a625-4381-bff0-cf73b97f70d7
+
+### 5. Settle Payment (Simulate Customer Paid)
+POST http://localhost:4000/api/v1/x402/settle/33581d6b-b2f4-4e5e-a53d-e19311611e89
+Content-Type: application/json
+
+{
+  "txHash": "0xabc1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
 }

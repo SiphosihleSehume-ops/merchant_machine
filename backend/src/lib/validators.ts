@@ -23,3 +23,11 @@ export const createInvoiceSchema = z.object({
     ).min(1, "Invoice must have at least one item"),
   }),
 });
+
+export const createIntentSchema = z.object({
+  body: z.object({
+    invoiceId: z.string().uuid("Invalid invoice ID"),
+    network: z.string().default("eip155:84532"), // Base Sepolia
+    payTo: z.string().min(1, "PayTo address is required"),
+  }),
+});
