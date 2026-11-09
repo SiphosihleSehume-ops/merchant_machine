@@ -1,0 +1,30 @@
+POST http://localhost:4000/api/v1/merchants/register
+Content-Type: application/json
+
+{
+  "email": "manager@capetowncoffee.com",
+  "password": "supersecretpassword",
+  "name": "Cape Town Coffee Co.",
+  "cryptoWallet": "0x1234567890abcdef1234567890abcdef12345678"
+}
+
+### Create Invoice
+POST http://localhost:4000/api/v1/invoices
+Content-Type: application/json
+
+{
+  "merchantId": "6c16db1d-5476-4868-954e-f15cb668088b",
+  "currency": "ZAR",
+  "items": [
+    {
+      "name": "Flat White Coffee",
+      "quantity": 2,
+      "unitPrice": 35.50
+    },
+    {
+      "name": "Croissant",
+      "quantity": 1,
+      "unitPrice": 45.00
+    }
+  ]
+}
