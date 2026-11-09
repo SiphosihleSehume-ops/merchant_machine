@@ -45,7 +45,8 @@ The customer's wallet signs the transaction and pays via the x402 facilitator.
 
 The backend verifies the payment, marks the invoice as PAID, and updates the Double-Entry Ledger.
 
-##💻 Tech Stack
+## 💻 Tech Stack
+
 Layer	Technology
 Frontend	Next.js 14, React, TypeScript, CSS
 Backend	Node.js, Express.js, TypeScript
@@ -53,7 +54,9 @@ Database	PostgreSQL (Hosted on Neon)
 ORM	Prisma
 Crypto Protocol	x402 (Coinbase / Base Sepolia)
 Validation & Auth	Zod, Bcrypt
-##🚀 Getting Started
+
+## 🚀 Getting Started
+
 Prerequisites
 Node.js (v20+)
 
@@ -94,7 +97,8 @@ cd ..
 pnpm dev
 (The frontend will run on http://localhost:3000)
 
-##📡 API Reference (Backend)
+## 📡 API Reference (Backend)
+
 You can test the backend endpoints using Postman or the test.http file included in the backend/ folder.
 
 POST /api/v1/merchants/register — Register a new merchant.
@@ -108,6 +112,7 @@ GET /api/v1/x402/pay/:invoiceId — Returns the 402 Payment Required challenge.
 POST /api/v1/x402/settle/:invoiceId — Settles the payment and updates the ledger.
 
 ## 🔒 Security & Compliance
+
 - **Non-Custodial:** Funds settle directly to the merchant's registered wallet. The platform never holds the merchant's funds.
 - **Server-Side Truth:** All invoice totals and fee calculations (3% markup) are calculated securely on the server.
 - **Auditable:** The double-entry ledger ensures that every cent is accounted for, simplifying accounting and tax compliance.
