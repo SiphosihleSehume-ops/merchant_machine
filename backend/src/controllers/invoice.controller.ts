@@ -1,17 +1,24 @@
 import { Request, Response } from 'express';
 import { InvoiceService } from '../services/invoice.service.js';
 import { createInvoiceSchema } from '../lib/validators.js';
+import { AuthRequest } from '../middleware/auth.middleware.js';
 
 export class InvoiceController {
-  static async create(req: Request, res: Response) {
+  static async create(req: AuthRequest, res: Response) {
     try {
       // 1. Validate input
       const validatedData = createInvoiceSchema.parse({ body: req.body });
 
-      // 2. Call Service
-      const invoice = await InvoiceService.createInvoice(validatedData.body);
+      // 2. Attach merchantId from the authenticated user to the invoice data
+      const secureData = {
+        ...validatedData.body,
+        merchantId: req.user?.merchantId as string, 
+      };
 
-      // 3. Return response
+      // 3. Call Service
+      const invoice = await InvoiceService.createInvoice(secureData);
+
+      // 4. Return response
       res.status(201).json({
         success: true,
         message: 'Invoice created successfully',

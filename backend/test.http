@@ -1,50 +1,40 @@
-### 1. Register Merchant (Already done, but here for reference)
-POST http://localhost:4000/api/v1/merchants/register
+### 1. Login (Get your token)
+POST http://localhost:4000/api/v1/merchants/login
 Content-Type: application/json
 
 {
   "email": "manager@capetowncoffee.com",
-  "password": "supersecretpassword",
-  "name": "Cape Town Coffee Co.",
-  "cryptoWallet": "0x1234567890abcdef1234567890abcdef12345678"
+  "password": "supersecretpassword"
 }
 
-### 2. Create Invoice
+### 2. Try to create invoice WITHOUT token (Expect 401 Access Denied)
 POST http://localhost:4000/api/v1/invoices
 Content-Type: application/json
 
 {
-  "merchantId": "6c16db1d-5476-4868-954e-f15cb668088b",
   "currency": "ZAR",
   "items": [
-    {
-      "name": "Flat White Coffee",
-      "quantity": 2,
-      "unitPrice": 35.50
-    },
-    {
-      "name": "Croissant",
-      "quantity": 1,
-      "unitPrice": 45.00
-    }
+    { "name": "Hacker Coffee", "quantity": 1, "unitPrice": 0.01 }
   ]
 }
 
-### 3. Create x402 Intent (MUST DO BEFORE SETTLING)
-POST http://localhost:4000/api/v1/x402/intent
+### 3. Create invoice WITH token (Expect 201 Created)
+POST http://localhost:4000/api/v1/invoices
 Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2Zjc1ZTdjMC01NzNlLTQ3ZGMtODlkNi02MWQ1MThkZTIxNWYiLCJtZXJjaGFudElkIjoiNmMxNmRiMWQtNTQ3Ni00ODY4LTk1NGUtZjE1Y2I2NjgwODhiIiwicm9sZSI6Ik1FUkNIQU5UIiwiaWF0IjoxNzk0MzA5NDY3LCJleHAiOjE3OTQzOTU4Njd9.pjD8BAyIhwqz-hd33fQp0BupsiG1FGSovTw2CE-oZ6w
 
 {
-  "invoiceId": "d9ff1d30-a625-4381-bff0-cf73b97f70d7",
-  "network": "eip155:84532",
-  "payTo": "0x1234567890abcdef1234567890abcdef12345678"
+  "currency": "ZAR",
+  "items": [
+    { "name": "Espresso", "quantity": 1, "unitPrice": 25.00 }
+  ]
 }
 
 ### 4. Request Payment (Simulate Scanning QR)
 GET http://localhost:4000/api/v1/x402/pay/d9ff1d30-a625-4381-bff0-cf73b97f70d7
 
 ### 5. Settle Payment (Simulate Customer Paid)
-POST http://localhost:4000/api/v1/x402/settle/33581d6b-b2f4-4e5e-a53d-e19311611e89
+POST http://localhost:4000/api/v1/x402/settle/d9ff1d30-a625-4381-bff0-cf73b97f70d7
 Content-Type: application/json
 
 {

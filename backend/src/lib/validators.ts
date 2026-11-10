@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+// Merchant registration schema
 export const createMerchantSchema = z.object({
   body: z.object({
     email: z.string().email("Invalid email format"),
@@ -10,9 +11,9 @@ export const createMerchantSchema = z.object({
   }),
 });
 
+// Invoice creation schema
 export const createInvoiceSchema = z.object({
   body: z.object({
-    merchantId: z.string().uuid("Invalid merchant ID"),
     currency: z.string().default("ZAR"),
     items: z.array(
       z.object({
@@ -24,6 +25,7 @@ export const createInvoiceSchema = z.object({
   }),
 });
 
+// Payment intent creation schema
 export const createIntentSchema = z.object({
   body: z.object({
     invoiceId: z.string().uuid("Invalid invoice ID"),

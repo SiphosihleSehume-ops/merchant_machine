@@ -1,6 +1,7 @@
 import { prisma } from '../lib/prisma.js';
 import { Prisma } from '@prisma/client'; // <-- Import Prisma
 import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken'; 
 
 export class MerchantService {
   static async registerMerchant(data: any) {
@@ -51,5 +52,36 @@ export class MerchantService {
       name: newMerchant.merchant.name,
       feePercentage: newMerchant.merchant.feePercentage,
     };
+  }
+
+  // Login method for merchants
+  static async loginMerchant(data: any) {
+    const { email, password } = data;
+
+    const user = await prisma.user.findUnique({
+      where: { email },
+      include: { merchant: true },
+    });
+
+    if (!user || user.role !== 'MERCHANT') {
+      throw new Error('Invalid email or password');
+    }
+
+    const validPassword = await bcrypt.compare(password, user.passwordHash);
+    if (!validPassword) {
+      throw new Error('Invalid email or password');
+    }
+
+    const token = jwt.sign(
+      { 
+        userId: user.id, 
+        merchantId: user.merchant!.id,
+        role: user.role 
+      },
+      process.env.JWT_SECRET as string,
+      { expiresIn: '24h' }
+    );
+
+    return { token, merchant: user.merchant };
   }
 }

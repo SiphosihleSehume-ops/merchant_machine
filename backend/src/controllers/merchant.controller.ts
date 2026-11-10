@@ -33,4 +33,27 @@ export class MerchantController {
       });
     }
   }
+
+  // Login method for merchants
+  static async login(req: Request, res: Response) {
+    try {
+      const { email, password } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({ error: 'Email and password are required' });
+      }
+
+      const result = await MerchantService.loginMerchant({ email, password });
+      
+      res.status(200).json({
+        success: true,
+        message: 'Login successful',
+        data: result,
+      });
+    } catch (error: any) {
+      res.status(401).json({
+        success: false,
+        error: error.message || 'Login failed',
+      });
+    }
+  }
 }

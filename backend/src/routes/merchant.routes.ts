@@ -5,5 +5,6 @@ const router = Router();
 
 // POST /api/v1/merchants/register
 router.post('/register', MerchantController.register);
+router.post('/login', MerchantController.login);
 
 export default router;
