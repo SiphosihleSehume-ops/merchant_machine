@@ -1,37 +1,123 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Merchant & Payment Machine
 
-## Getting Started
+> A next-generation payment infrastructure for merchants to accept fiat and cryptocurrency, settling directly into their own wallets with zero custodial risk.
 
-First, run the development server:
+## 📖 Overview
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
+The **Merchant & Payment Machine** solves the fragmentation of merchant payment processing. Instead of managing separate POS systems for fiat and crypto, merchants use a single interface to generate secure invoices. Customers can pay using their traditional bank cards or by scanning a QR code with a Web3 wallet.
+
+Powered by the **x402 protocol**, crypto payments are settled on-chain near-instantly, eliminating chargeback risk and providing merchants with a transparent, double-entry ledger of all transactions and platform fees.
+
+## ✨ Key Features
+
+- **Dual-Rail Payments:** Accept both fiat and crypto (USDC via x402).
+- **Secure Invoicing:** Server-side mathematical calculations to prevent client-side tampering. Invoices expire automatically.
+- **x402 Protocol Integration:** Generates standard HTTP `402 Payment Required` challenges for Web3 wallets.
+- **Double-Entry Ledger:** Immutable financial records tracking platform fees (3% markup) and merchant payables.
+- **Merchant-Approved Reversals:** A safe refund flow that avoids insecure `transferFrom` smart contract calls.
+- **Modern UI:** A sleek, responsive Next.js frontend designed for both merchants and customers.
+
+## 🏗 System Architecture
+
+The project is structured as a monorepo containing the frontend Next.js application and the Express backend.
+
+```text
+merchant_machine/
+├── app/                  # Next.js Frontend (App Router)
+├── components/           # React UI Components
+├── backend/              # Express.js + Prisma Backend
+│   ├── src/              # API Source Code (Controllers, Services, Routes)
+│   └── prisma/           # Database Schema & Migrations
+├── contracts/            # Smart Contracts / x402 configurations
+└── package.json          # Frontend dependencies
+
+
+The Payment Flow
+Merchant logs in and creates an Invoice.
+
+Backend calculates the total and generates a single-use Invoice ID (QR Code).
+
+Customer scans the QR code.
+
+The backend returns an HTTP 402 Payment Required response with the x402 payment terms.
+
+The customer's wallet signs the transaction and pays via the x402 facilitator.
+
+The backend verifies the payment, marks the invoice as PAID, and updates the Double-Entry Ledger.
+
+## 💻 Tech Stack
+
+Layer	Technology
+Frontend	Next.js 14, React, TypeScript, CSS
+Backend	Node.js, Express.js, TypeScript
+Database	PostgreSQL (Hosted on Neon)
+ORM	Prisma
+Crypto Protocol	x402 (Coinbase / Base Sepolia)
+Validation & Auth	Zod, Bcrypt
+
+## 🚀 Getting Started
+
+Prerequisites
+Node.js (v20+)
+
+pnpm (Package Manager)
+
+A PostgreSQL Database (We recommend a free Neon.tech database)
+
+1. Installation
+Clone the repository and install the frontend dependencies:
+
+bash
+git clone https://github.com/SiphosihleSehume-ops/merchant_machine.git
+cd merchant_machine
+pnpm install
+2. Setup the Backend
+Navigate to the backend folder and install its dependencies:
+
+bash
+cd backend
+pnpm install
+Create a .env file in the backend/ directory and add your database connection string:
+
+env
+DATABASE_URL="postgresql://user:password@your-neon-host.neon.tech/neondb?sslmode=require"
+PORT=4000
+Push the Prisma schema to your database and start the API server:
+
+bash
+npx prisma migrate dev
 pnpm dev
-# or
-bun dev
-```
+(The backend will run on http://localhost:4000)
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+3. Setup the Frontend
+Open a new terminal window, navigate back to the root folder, and start the Next.js app:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+bash
+cd ..
+pnpm dev
+(The frontend will run on http://localhost:3000)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## 📡 API Reference (Backend)
 
-## Learn More
+You can test the backend endpoints using Postman or the test.http file included in the backend/ folder.
 
-To learn more about Next.js, take a look at the following resources:
+POST /api/v1/merchants/register — Register a new merchant.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+POST /api/v1/invoices — Create a secure, server-calculated invoice.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+POST /api/v1/x402/intent — Generate an x402 payment intent.
 
-## Deploy on Vercel
+GET /api/v1/x402/pay/:invoiceId — Returns the 402 Payment Required challenge.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+POST /api/v1/x402/settle/:invoiceId — Settles the payment and updates the ledger.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-# merchant_machine
+## 🔒 Security & Compliance
+
+- **Non-Custodial:** Funds settle directly to the merchant's registered wallet. The platform never holds the merchant's funds.
+- **Server-Side Truth:** All invoice totals and fee calculations (3% markup) are calculated securely on the server.
+- **Auditable:** The double-entry ledger ensures that every cent is accounted for, simplifying accounting and tax compliance.
+
+## 📄 License
+This project is licensed under the MIT License.
+
+
