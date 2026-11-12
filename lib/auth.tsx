@@ -22,6 +22,7 @@ type AuthContextValue = {
   ready: boolean;
   session: Session | null;
   login: (email: string, password: string) => Promise<Session>;
+  verifyOtp: (email: string, otp: string) => Promise<Session>;
   selectRole: (input: { role: Role; businessName?: string; cryptoWallet?: string }) => Promise<Session>;
   refresh: () => Promise<void>;
   logout: () => void;
@@ -76,6 +77,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [save],
   );
 
+  const verifyOtp = useCallback(
+    async (email: string, otp: string) => {
+      const next = await api<Session>("/auth/verify-otp", { body: { email, otp }, auth: false });
+      save(next);
+      return next;
+    },
+    [save],
+  );
+
   const selectRole = useCallback(
     async (input: { role: Role; businessName?: string; cryptoWallet?: string }) => {
       const next = await api<Session>("/auth/select-role", { body: input });
@@ -94,8 +104,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(() => save(null), [save]);
 
   const value = useMemo(
-    () => ({ ready, session, login, selectRole, refresh, logout }),
-    [ready, session, login, selectRole, refresh, logout],
+    () => ({ ready, session, login, verifyOtp, selectRole, refresh, logout }),
+    [ready, session, login, verifyOtp, selectRole, refresh, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
