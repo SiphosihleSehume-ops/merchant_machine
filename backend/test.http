@@ -1,0 +1,42 @@
+### 1. Login (Get your token)
+POST http://localhost:4000/api/v1/merchants/login
+Content-Type: application/json
+
+{
+  "email": "manager@capetowncoffee.com",
+  "password": "supersecretpassword"
+}
+
+### 2. Try to create invoice WITHOUT token (Expect 401 Access Denied)
+POST http://localhost:4000/api/v1/invoices
+Content-Type: application/json
+
+{
+  "currency": "ZAR",
+  "items": [
+    { "name": "Hacker Coffee", "quantity": 1, "unitPrice": 0.01 }
+  ]
+}
+
+### 3. Create invoice WITH token (Expect 201 Created)
+POST http://localhost:4000/api/v1/invoices
+Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2Zjc1ZTdjMC01NzNlLTQ3ZGMtODlkNi02MWQ1MThkZTIxNWYiLCJtZXJjaGFudElkIjoiNmMxNmRiMWQtNTQ3Ni00ODY4LTk1NGUtZjE1Y2I2NjgwODhiIiwicm9sZSI6Ik1FUkNIQU5UIiwiaWF0IjoxNzk0MzA5NDY3LCJleHAiOjE3OTQzOTU4Njd9.pjD8BAyIhwqz-hd33fQp0BupsiG1FGSovTw2CE-oZ6w
+
+{
+  "currency": "ZAR",
+  "items": [
+    { "name": "Espresso", "quantity": 1, "unitPrice": 25.00 }
+  ]
+}
+
+### 4. Request Payment (Simulate Scanning QR)
+GET http://localhost:4000/api/v1/x402/pay/d9ff1d30-a625-4381-bff0-cf73b97f70d7
+
+### 5. Settle Payment (Simulate Customer Paid)
+POST http://localhost:4000/api/v1/x402/settle/d9ff1d30-a625-4381-bff0-cf73b97f70d7
+Content-Type: application/json
+
+{
+  "txHash": "0xabc1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+}

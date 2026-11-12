@@ -1,0 +1,257 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------
+// ENUMS (Required for strict state management)
+// ------------------------------------------------------
+
+enum Role {
+  MERCHANT
+  CUSTOMER
+}
+
+enum KycStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+}
+
+enum InvoiceStatus {
+  PENDING
+  PAID
+  EXPIRED
+  CANCELLED
+}
+
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  SETTLED
+  FAILED
+}
+
+enum ReversalStatus {
+  PENDING_MERCHANT
+  APPROVED
+  DECLINED
+  COMPLETED
+  FAILED
+}
+
+enum LedgerAccount {
+  PLATFORM_FEE
+  MERCHANT_PAYABLE
+  MERCHANT_RESERVE
+}
+
+enum LedgerType {
+  DEBIT
+  CREDIT
+}
+
+// ------------------------------------------------------
+// MODELS
+// ------------------------------------------------------
+
+// Base Auth Model (PDF Section 4: Role Picker)
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String
+  role         Role      @default(CUSTOMER)
+  kycStatus    KycStatus @default(UNVERIFIED)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  merchant Merchant?
+  customer Customer?
+}
+
+// 1. The Merchant Entity (Merged from your original)
+model Merchant {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id])
+
+  name         String
+  fiatWallet   String? // e.g., Bank Account / IBAN
+  cryptoWallet String? // e.g., EVM Address (0x...)
+
+  // Fee configurations (PDF Section 3.4)
+  feePercentage Float @default(3.0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  transactions  Transaction[]
+  intents       X402PaymentIntent[]
+  invoices      Invoice[]
+  ledgerEntries LedgerEntry[]
+  reversals     Reversal[]
+}
+
+// Customer Entity (PDF Section 4)
+model Customer {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id])
+
+  walletAddress String? // Non-custodial wallet address
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  transactions Transaction[]
+  reversals    Reversal[]
+}
+
+// PDF Section 3.5: Invoice Integrity
+model Invoice {
+  id         String   @id @default(uuid()) // Single-use ID for QR
+  merchantId String
+  merchant   Merchant @relation(fields: [merchantId], references: [id])
+
+  status      InvoiceStatus @default(PENDING)
+  subtotal    Decimal       @db.Decimal(18, 6)
+  totalAmount Decimal       @db.Decimal(18, 6)
+  currency    String        @default("ZAR")
+
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  items       InvoiceItem[]
+  transaction Transaction?
+}
+
+model InvoiceItem {
+  id        String  @id @default(uuid())
+  invoiceId String
+  invoice   Invoice @relation(fields: [invoiceId], references: [id])
+
+  name      String
+  quantity  Int
+  unitPrice Decimal @db.Decimal(18, 6)
+  total     Decimal @db.Decimal(18, 6)
+}
+
+// 2. The Central Ledger (Merged from your original)
+model Transaction {
+  id String @id @default(uuid())
+
+  // Link to Invoice OR direct merchant payment
+  invoiceId String?  @unique
+  invoice   Invoice? @relation(fields: [invoiceId], references: [id])
+
+  merchantId String
+  merchant   Merchant @relation(fields: [merchantId], references: [id])
+
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id])
+
+  amount   Decimal           @db.Decimal(18, 6)
+  currency String // e.g., "USD", "USDC", "ZAR"
+  type     String // "FIAT" or "CRYPTO"
+  status   TransactionStatus @default(PENDING)
+
+  idempotencyKey String? @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  settlement Settlement?
+  x402Intent X402PaymentIntent?
+  reversal   Reversal?
+}
+
+// 3. x402 Payment Intent (Kept exactly from your original)
+model X402PaymentIntent {
+  id            String      @id @default(uuid())
+  transactionId String      @unique
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+  merchantId    String
+  merchant      Merchant    @relation(fields: [merchantId], references: [id])
+
+  network   String // e.g., "eip155:84532" (Base Sepolia)
+  payTo     String // Merchant's x402 receiving address
+  status    String   @default("AWAITING_PAYMENT") // AWAITING_PAYMENT, EXPIRED, VERIFIED
+  expiresAt DateTime
+
+  createdAt DateTime @default(now())
+}
+
+// 4. Settlement Record (Kept exactly from your original)
+model Settlement {
+  id            String      @id @default(uuid())
+  transactionId String      @unique
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+
+  destination String // The final wallet/account funds were sent to
+  rail        String // "PSP" or "X402_FACILITATOR"
+  txHash      String? // On-chain hash from x402 facilitator (if crypto)
+  fxSnapshot  Decimal? @db.Decimal(18, 6) // Conversion rate at time of settlement
+
+  settledAt DateTime @default(now())
+}
+
+// PDF Section 3.2 & 3.3: Reversal Logic
+model Reversal {
+  id            String      @id @default(uuid())
+  transactionId String      @unique
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+
+  merchantId String
+  merchant   Merchant @relation(fields: [merchantId], references: [id])
+
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  amount      Decimal        @db.Decimal(18, 6)
+  status      ReversalStatus @default(PENDING_MERCHANT)
+  reversalFee Decimal        @default(0) @db.Decimal(18, 6)
+
+  merchantApprovedAt DateTime?
+  refundTxHash       String?   @unique // The NEW on-chain transaction back to customer
+
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+}
+
+// PDF Section 3.8: Immutable double-entry ledger
+model LedgerEntry {
+  id         String   @id @default(uuid())
+  merchantId String
+  merchant   Merchant @relation(fields: [merchantId], references: [id])
+
+  transactionId String?
+  reversalId    String?
+
+  account     LedgerAccount
+  type        LedgerType
+  amount      Decimal       @db.Decimal(18, 6)
+  description String // e.g., "3% Markup on Inv #123"
+
+  createdAt DateTime @default(now())
+}
+
+// PDF Section 3.8: Webhooks (idempotent)
+model WebhookEvent {
+  id         String @id @default(uuid())
+  merchantId String
+  eventType  String // e.g., "payment.settled", "reversal.requested"
+  payload    Json
+  status     String @default("PENDING") // PENDING, DELIVERED, FAILED
+  attempts   Int    @default(0)
+
+  createdAt   DateTime  @default(now())
+  deliveredAt DateTime?
+}
