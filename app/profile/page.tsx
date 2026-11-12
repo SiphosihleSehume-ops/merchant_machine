@@ -1,9 +1,12 @@
+"use client";
+
 import Link from "next/link";
 import {
-  Award, Star, Store, MapPin, FileUp, Smartphone, CreditCard, ChevronRight, Pencil,
+  Award, Star, Store, MapPin, FileUp, Smartphone, CreditCard, ChevronRight, Pencil, Repeat, LogOut,
 } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
 import { merchant } from "@/lib/data";
+import { useAuth } from "@/lib/auth";
 
 const items = [
   { label: "Rewards partners", Icon: Award, href: "#" },
@@ -15,6 +18,7 @@ const items = [
 ];
 
 export default function Profile() {
+  const { session, logout } = useAuth();
   return (
     <>
       <PageHeader
@@ -56,6 +60,16 @@ export default function Profile() {
               <ChevronRight size={20} />
             </Link>
           ))}
+          <Link href="/choose-role" className="card-link">
+            <Repeat size={26} color="var(--accent)" strokeWidth={1.7} />
+            <span className="grow">Switch role</span>
+            <ChevronRight size={20} />
+          </Link>
+          <button className="card-link" onClick={logout} style={{ width: "100%", textAlign: "left" }}>
+            <LogOut size={26} color="var(--bad)" strokeWidth={1.7} />
+            <span className="grow">Sign out</span>
+          </button>
+          <p className="center-note" style={{ fontSize: 13 }}>Signed in as {session?.user.email}</p>
         </div>
       </main>
     </>

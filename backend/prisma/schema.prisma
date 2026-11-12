@@ -67,12 +67,29 @@ model User {
   role         Role      @default(CUSTOMER)
   kycStatus    KycStatus @default(UNVERIFIED)
 
+  // Email must be verified before sign-in
+  emailVerifiedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   // Relations
-  merchant Merchant?
-  customer Customer?
+  merchant           Merchant?
+  customer           Customer?
+  verificationTokens EmailVerificationToken[]
+}
+
+// Single-use email verification link (only the SHA-256 hash is stored)
+model EmailVerificationToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
 }
 
 // 1. The Merchant Entity (Merged from your original)
@@ -105,7 +122,7 @@ model Customer {
   userId String @unique
   user   User   @relation(fields: [userId], references: [id])
 
-  walletAddress String? // Non-custodial wallet address
+  walletAddress String? @unique // Non-custodial wallet (lowercase), proven by signature
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -163,6 +180,10 @@ model Transaction {
   type     String // "FIAT" or "CRYPTO"
   status   TransactionStatus @default(PENDING)
 
+  // x402 details: which token paid and from which wallet
+  asset        String? // token symbol, e.g. "ZARK", "USDC"
+  payerAddress String? // lowercase EVM address
+
   idempotencyKey String? @unique
 
   createdAt DateTime @default(now())
@@ -219,6 +240,9 @@ model Reversal {
   status      ReversalStatus @default(PENDING_MERCHANT)
   reversalFee Decimal        @default(0) @db.Decimal(18, 6)
 
+  reason             String?
+  feeAcknowledgedAt  DateTime // Customer accepted the non-refundable fee warning
+  expiresAt          DateTime // Merchant must approve/decline before this
   merchantApprovedAt DateTime?
   refundTxHash       String?   @unique // The NEW on-chain transaction back to customer
 

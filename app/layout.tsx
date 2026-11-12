@@ -1,10 +1,12 @@
 import type { Metadata, Viewport } from "next";
 import "@fontsource-variable/inter";
 import "./globals.css";
+import { AuthProvider } from "@/lib/auth";
+import AuthGate from "@/components/AuthGate";
 
 export const metadata: Metadata = {
   title: "Merchant & Payment Machine",
-  description: "Merchant dashboard for payments, top-ups, transfers and orders.",
+  description: "Pay and get paid with ZARK and USDC stablecoins.",
 };
 
 export const viewport: Viewport = {
@@ -17,7 +19,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
-        <div className="shell">{children}</div>
+        <div className="shell">
+          <AuthProvider>
+            <AuthGate>{children}</AuthGate>
+          </AuthProvider>
+        </div>
       </body>
     </html>
   );

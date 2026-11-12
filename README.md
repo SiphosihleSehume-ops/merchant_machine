@@ -1,4 +1,7 @@
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> af711698bccc1c0a2afa3fdd97de41733bb3d0d3
 # Merchant & Payment Machine
 
 > A next-generation payment infrastructure for merchants to accept fiat and cryptocurrency, settling directly into their own wallets with zero custodial risk.
@@ -141,4 +144,8 @@ Next.js (App Router) + TypeScript. Mobile-first merchant UI, dark theme with an 
 Home, Suppliers (sort / distance / favourites + search), Top ups, Transfers, History,
 Stock advance, Money transfer (+ per-country stub), Accounts, Orders, Profile, Devices,
 Inbox, Share code (QR), Request payment, Cart, Scan, Menu.
+<<<<<<< HEAD
 >>>>>>> origin/main
+=======
+
+>>>>>>> af711698bccc1c0a2afa3fdd97de41733bb3d0d3

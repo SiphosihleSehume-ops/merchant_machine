@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import Logo from "@/components/Logo";
@@ -5,8 +7,11 @@ import BottomNav from "@/components/BottomNav";
 import { CartButton } from "@/components/PageHeader";
 import { formatRand, merchant } from "@/lib/data";
 import { tiles } from "@/lib/nav";
+import { useAuth } from "@/lib/auth";
 
 export default function Home() {
+  const { session } = useAuth();
+  const shopName = session?.user.merchant?.name ?? merchant.name;
   const pct = Math.round((merchant.profileStep / merchant.profileSteps) * 100);
   return (
     <>
@@ -14,7 +19,7 @@ export default function Home() {
         <section className="home-head">
           <div className="who">
             <Logo />
-            <span>{merchant.name}</span>
+            <span>{shopName}</span>
           </div>
           <div className="balance">{formatRand(merchant.balance)}</div>
           <CartButton />

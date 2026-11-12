@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { X402Service } from '../services/x402.service.js';
 import { createIntentSchema } from '../lib/validators.js';
+import { currentQuote } from '../lib/x402.js';
 
 export class X402Controller {
   // 1. Creates the database record for the payment intent
@@ -30,37 +31,22 @@ export class X402Controller {
     }
   }
 
-  // 2. Simulates the x402 middleware challenge (Returns 402 Payment Required)
+  // 2. Runs only after @x402/express has verified the payment signature and the
+  //    invoice has been claimed. The facilitator settles on-chain once this responds,
+  //    and the onAfterSettle hook writes the ledger.
   static async payInvoice(req: Request, res: Response) {
-    try {
-      // FIX: Cast params to string
-      const invoiceId = req.params.invoiceId as string;
-      
-      // In a real implementation, the @x402/express middleware 
-      // handles this automatically.
-      // For now, we simulate the 402 response.
-      
-      res.status(402).json({
-        error: 'Payment Required',
-        message: 'This resource requires payment.',
-        accepts: [
-          {
-            scheme: 'exact',
-            network: 'eip155:84532', // Base Sepolia
-            maxAmountRequired: '116000000', // 116 ZAR in USDC decimals (mock)
-            resource: `http://localhost:4000/api/v1/x402/pay/${invoiceId}`,
-            description: 'Cape Town Coffee Co. Invoice',
-            mimeType: 'application/json',
-            payTo: '0x1234567890abcdef1234567890abcdef12345678', // Merchant Wallet
-            maxTimeoutSeconds: 300,
-            asset: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', // USDC Contract
-            extra: null
-          }
-        ]
-      });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
+    const quote = currentQuote();
+    res.status(200).json({
+      success: true,
+      message: 'Payment verified; settlement in progress',
+      data: {
+        invoiceId: quote.invoiceId,
+        merchantName: quote.merchantName,
+        total: quote.totalAmount,
+        currency: quote.currency,
+        // The on-chain tx hash is returned in the PAYMENT-RESPONSE header
+      },
+    });
   }
 
   // 3. Settles the payment and updates the double-entry ledger
