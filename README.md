@@ -1,131 +1,159 @@
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
 >>>>>>> af711698bccc1c0a2afa3fdd97de41733bb3d0d3
 # Merchant & Payment Machine
 
-> A next-generation payment infrastructure for merchants to accept fiat and cryptocurrency, settling directly into their own wallets with zero custodial risk.
+> A dual-role (Merchant + Customer) payment application and x402 resource server enabling instant digital rand (`ZARK`) and `USDC` payments with gasless EIP-3009 signatures, server-verified invoicing, an immutable double-entry ledger, and merchant-consented reversals.
 
-## 📖 Overview
+## Overview
 
-The **Merchant & Payment Machine** solves the fragmentation of merchant payment processing. Instead of managing separate POS systems for fiat and crypto, merchants use a single interface to generate secure invoices. Customers can pay using their traditional bank cards or by scanning a QR code with a Web3 wallet.
+The **Merchant & Payment Machine** provides a unified payment flow for merchants and customers:
 
-Powered by the **x402 protocol**, crypto payments are settled on-chain near-instantly, eliminating chargeback risk and providing merchants with a transparent, double-entry ledger of all transactions and platform fees.
+- **Gasless x402 Payments:** Customers sign an off-chain EIP-3009 `transferWithAuthorization` payload in MetaMask. A self-hosted in-process x402 facilitator verifies and settles the payment on-chain so the customer pays **zero gas**.
+- **Invoice Integrity (PDF §3.5):** Invoices are calculated on the server using exact `Prisma.Decimal` arithmetic and expire after 15 minutes. Each QR code encodes only the single-use `/api/v1/x402/pay/:invoiceId` URL—never a raw amount—and displays the verified merchant name and wallet before the customer signs.
+- **Single Fee Schedule & Double-Entry Ledger (PDF §3.4 & §3.8):** A single **3.0% service fee** (paid by the merchant) is split atomically into `MERCHANT_PAYABLE` (97%) and `PLATFORM_FEE` (3%) in the `LedgerEntry` table upon settlement.
+- **Safe Merchant-Approved Reversals (PDF §3.2 & §3.3):** Never uses `transferFrom`. Customers acknowledge the non-refundable service fee before submitting a reversal request (full or partial net amount) with a configurable merchant approval timeout (`REVERSAL_APPROVAL_HOURS`). When the merchant approves, the platform treasury executes a new on-chain refund transaction back to the customer and records reversing `DEBIT` entries in the ledger.
+- **POPIA-Minimised Tiered KYC & Non-Custodial Wallets (PDF §3.6):** Customers link non-custodial EVM wallets via EIP-191 ownership signatures and progress from `TIER_1_BASIC` to `TIER_2_VERIFIED` without storing raw ID documents.
+- **Idempotent Webhooks (PDF §3.8):** Settlement and reversal transitions emit deduplicated `WebhookEvent` records (`payment.settled`, `payment.failed`, `reversal.requested`, `reversal.declined`, `reversal.completed`, `reversal.failed`, `reversal.expired`).
 
-## ✨ Key Features
-
-- **Dual-Rail Payments:** Accept both fiat and crypto (USDC via x402).
-- **Secure Invoicing:** Server-side mathematical calculations to prevent client-side tampering. Invoices expire automatically.
-- **x402 Protocol Integration:** Generates standard HTTP `402 Payment Required` challenges for Web3 wallets.
-- **Double-Entry Ledger:** Immutable financial records tracking platform fees (3% markup) and merchant payables.
-- **Merchant-Approved Reversals:** A safe refund flow that avoids insecure `transferFrom` smart contract calls.
-- **Modern UI:** A sleek, responsive Next.js frontend designed for both merchants and customers.
-
-## 🏗 System Architecture
-
-The project is structured as a monorepo containing the frontend Next.js application and the Express backend.
+## System Architecture
 
 ```text
 merchant_machine/
-├── app/                  # Next.js Frontend (App Router)
-├── components/           # React UI Components
-├── backend/              # Express.js + Prisma Backend
-│   ├── src/              # API Source Code (Controllers, Services, Routes)
-│   └── prisma/           # Database Schema & Migrations
-├── contracts/            # Smart Contracts / x402 configurations
-└── package.json          # Frontend dependencies
+├── app/                  # Next.js 16 Frontend (App Router: Merchant & Customer shells)
+├── components/           # Shared React UI Components (AuthGate, QrScanner, headers, nav)
+├── lib/                  # Frontend API client, auth context, MetaMask + x402 client helpers
+├── backend/              # Express.js + Prisma Backend & Self-Hosted x402 Facilitator
+│   ├── src/              # Controllers, Services, Middleware, Routes, Validators
+│   ├── prisma/           # PostgreSQL Schema & Migrations
+│   └── scripts/          # Local E2E test suite (e2e-local.ts)
+└── contracts/            # Hardhat 3 + TestStablecoin (EIP-3009 + EIP-2612: ZARK, USDC, NGN)
+```
 
+## Tech Stack
 
-The Payment Flow
-Merchant logs in and creates an Invoice.
+| Layer | Technology |
+| :--- | :--- |
+| **Frontend** | Next.js 16 (App Router), React 19, TypeScript, Viem, `jsqr`, `qrcode.react` |
+| **Backend** | Node.js, Express 5, TypeScript, Zod, Bcrypt, JWT, Nodemailer |
+| **Database & ORM** | PostgreSQL, Prisma 6 (`Decimal(18, 6)` financial precision) |
+| **x402 & Blockchain** | `@x402/express`, `@x402/core`, `@x402/evm`, Viem, Hardhat 3, OpenZeppelin 5 (Ethereum Sepolia `11155111` / Hardhat `31337`) |
 
-Backend calculates the total and generates a single-use Invoice ID (QR Code).
+## Getting Started
 
-Customer scans the QR code.
+### Quick Start (Single-Command Launcher)
 
-The backend returns an HTTP 402 Payment Required response with the x402 payment terms.
+You can boot the entire stack (dependencies, local PostgreSQL via Docker, local Hardhat chain + contract deployments, Prisma migrations, Backend API, and Next.js Frontend) with a single script:
 
-The customer's wallet signs the transaction and pays via the x402 facilitator.
+```bash
+./run-all.sh          # Start full local stack (Hardhat + DB + Backend :4000 + Frontend :3000)
+./run-all.sh --e2e    # Start local stack and run the full end-to-end test suite
+./run-all.sh --sepolia # Start Backend + Frontend using existing Sepolia .env files
+```
 
-The backend verifies the payment, marks the invoice as PAID, and updates the Double-Entry Ledger.
+### Manual Setup
 
-## 💻 Tech Stack
+#### Prerequisites
 
-Layer	Technology
-Frontend	Next.js 14, React, TypeScript, CSS
-Backend	Node.js, Express.js, TypeScript
-Database	PostgreSQL (Hosted on Neon)
-ORM	Prisma
-Crypto Protocol	x402 (Coinbase / Base Sepolia)
-Validation & Auth	Zod, Bcrypt
+- **Node.js** (v20+)
+- **pnpm** (or npm)
+- **PostgreSQL** database (local or hosted on Neon)
 
-## 🚀 Getting Started
+### 1. Deploy Testnet Stablecoins (`contracts/`)
 
-Prerequisites
-Node.js (v20+)
+Deploy `ZARK` (1:1 ZAR), `USDC`, and `NGN` EIP-3009 test tokens to Ethereum Sepolia or a local Hardhat node:
 
-pnpm (Package Manager)
+```bash
+cd contracts
+npm install
+# For a local chain: npx hardhat node (in another terminal)
+npx hardhat run scripts/deploy.ts --network localhost
+# Or for Sepolia (after configuring contracts/.env from contracts/env.example):
+# npx hardhat run scripts/deploy.ts --network sepolia
+```
 
-A PostgreSQL Database (We recommend a free Neon.tech database)
+Copy the printed `TOKEN_ZARK_ADDRESS`, `TOKEN_USDC_ADDRESS`, and `TOKEN_NGN_ADDRESS` values into `backend/.env` and `.env.local`.
 
-1. Installation
-Clone the repository and install the frontend dependencies:
+### 2. Setup the Backend (`backend/`)
 
-bash
-git clone https://github.com/SiphosihleSehume-ops/merchant_machine.git
-cd merchant_machine
+```bash
+cd ../backend
 pnpm install
-2. Setup the Backend
-Navigate to the backend folder and install its dependencies:
+cp env.example .env
+```
 
-bash
-cd backend
-pnpm install
-Create a .env file in the backend/ directory and add your database connection string:
+Configure `backend/.env` (see [backend/env.example](file:///home/g33k/Projects/merchant_machine/backend/env.example) for all options):
 
-env
-DATABASE_URL="postgresql://user:password@your-neon-host.neon.tech/neondb?sslmode=require"
+```env
+DATABASE_URL="postgresql://user:password@localhost:5432/merchant_machine"
+JWT_SECRET="change-me-to-a-long-random-string"
 PORT=4000
-Push the Prisma schema to your database and start the API server:
+CORS_ORIGIN="http://localhost:3000"
+APP_URL="http://localhost:3000"
 
-bash
-npx prisma migrate dev
+CHAIN_ID=11155111
+SEPOLIA_RPC_URL="https://eth-sepolia.g.alchemy.com/v2/<key>"
+FACILITATOR_PRIVATE_KEY="0x..."
+
+TOKEN_ZARK_ADDRESS="0x..."
+TOKEN_USDC_ADDRESS="0x..."
+TOKEN_NGN_ADDRESS="0x..."
+
+ZAR_PER_USD=18.50
+REVERSAL_APPROVAL_HOURS=24
+```
+
+Run migrations and start the API server:
+
+```bash
+npx prisma migrate deploy
 pnpm dev
-(The backend will run on http://localhost:4000)
+```
 
-3. Setup the Frontend
-Open a new terminal window, navigate back to the root folder, and start the Next.js app:
+The backend listens on `http://localhost:4000`.
 
-bash
+### 3. Setup the Frontend (root)
+
+```bash
 cd ..
+pnpm install
+cp env.example .env.local
 pnpm dev
-(The frontend will run on http://localhost:3000)
+```
 
-## 📡 API Reference (Backend)
+The frontend runs on `http://localhost:3000`.
 
-You can test the backend endpoints using Postman or the test.http file included in the backend/ folder.
+## API Reference (`backend/`)
 
-POST /api/v1/merchants/register — Register a new merchant.
+### Auth & Role Selection (`/api/v1/auth`)
+- `POST /api/v1/auth/register` — Register with `{ email, password }` and send a single-use verification link.
+- `POST /api/v1/auth/verify-email` — Verify email with `{ token }`.
+- `POST /api/v1/auth/resend-verification` — Resend verification email.
+- `POST /api/v1/auth/login` — Sign in with `{ email, password }`.
+- `POST /api/v1/auth/select-role` — Choose active role (`CUSTOMER` or `MERCHANT` with `{ businessName, cryptoWallet }`).
+- `GET /api/v1/auth/me` — Current user, active role, KYC status, and linked profiles.
 
-POST /api/v1/invoices — Create a secure, server-calculated invoice.
+### Customer Onboarding, Wallet & KYC (`/api/v1/customers`)
+- `GET /api/v1/customers/me` — Customer profile, linked non-custodial wallet, and KYC tier limits (`TIER_1_BASIC` / `TIER_2_VERIFIED`).
+- `POST /api/v1/customers/me/kyc` — Submit POPIA-minimised KYC attestation (`{ fullName, countryCode, popiaConsent: true }`).
+- `PUT /api/v1/customers/me/wallet` — Link a non-custodial EVM wallet via EIP-191 signature (`{ address, issuedAt, signature }`).
 
-POST /api/v1/x402/intent — Generate an x402 payment intent.
+### Invoices & x402 Payments (`/api/v1/invoices`, `/api/v1/x402`)
+- `POST /api/v1/invoices` — *(Merchant)* Create a server-calculated multi-item invoice with 15-minute expiry.
+- `GET /api/v1/invoices/:id` — *(Merchant)* Poll invoice status, fee breakdown, and settlement receipt.
+- `GET /api/v1/x402/pay/:invoiceId` — Issues the `402 Payment Required` challenge (with merchant name, wallet, items, 3% service fee, and `ZARK`/`USDC` quotes) and, when retried with a signed `PAYMENT-SIGNATURE` header, verifies and settles on-chain via the facilitator.
+- `POST /api/v1/x402/intent` — *(Authenticated)* Create an explicit x402 payment intent record.
+- `POST /api/v1/x402/settle/:invoiceId` — *(Authenticated)* Record manual/fallback settlement by `txHash`.
 
-GET /api/v1/x402/pay/:invoiceId — Returns the 402 Payment Required challenge.
+### Transactions, Reversals & Ledger (`/api/v1/transactions`, `/api/v1/reversals`, `/api/v1/merchants`)
+- `GET /api/v1/transactions` — List transactions (`PENDING`, `SETTLED`, `FAILED`, `REVERSED`) scoped to the active merchant or customer.
+- `POST /api/v1/reversals` — *(Customer)* Request a full or partial reversal after acknowledging the non-refundable service fee (`{ transactionId, amount?, reason?, acknowledgeNonRefundableFee: true }`).
+- `GET /api/v1/reversals` — List reversals scoped to the active merchant or customer (auto-expiring stale requests past `expiresAt`).
+- `PATCH /api/v1/reversals/:id` — *(Merchant)* Approve or decline a pending reversal (`{ action: "APPROVE" | "DECLINE", reason? }`). Approval executes an on-chain refund from the platform treasury and records reversing `DEBIT` ledger entries.
+- `GET /api/v1/merchants/me/ledger` — *(Merchant)* View double-entry ledger balances (`merchantPayable`, `platformFees`, `merchantReserve`) and entry history.
+- `GET /api/v1/merchants/me/webhooks` — *(Merchant)* View idempotent webhook events.
 
-POST /api/v1/x402/settle/:invoiceId — Settles the payment and updates the ledger.
+## License
 
-## 🔒 Security & Compliance
-
-- **Non-Custodial:** Funds settle directly to the merchant's registered wallet. The platform never holds the merchant's funds.
-- **Server-Side Truth:** All invoice totals and fee calculations (3% markup) are calculated securely on the server.
-- **Auditable:** The double-entry ledger ensures that every cent is accounted for, simplifying accounting and tax compliance.
-
-## 📄 License
 This project is licensed under the MIT License.
-
-
-=======
 # Merchant & Payment Machine: front end
 
 Next.js (App Router) + TypeScript. Mobile-first merchant UI, dark theme with an orange accent.
@@ -144,8 +172,6 @@ Next.js (App Router) + TypeScript. Mobile-first merchant UI, dark theme with an 
 Home, Suppliers (sort / distance / favourites + search), Top ups, Transfers, History,
 Stock advance, Money transfer (+ per-country stub), Accounts, Orders, Profile, Devices,
 Inbox, Share code (QR), Request payment, Cart, Scan, Menu.
-<<<<<<< HEAD
->>>>>>> origin/main
-=======
 
->>>>>>> af711698bccc1c0a2afa3fdd97de41733bb3d0d3
+=======
+>>>>>>> ef6c8148ff3a24ef71634e51707437d8b2332ee1

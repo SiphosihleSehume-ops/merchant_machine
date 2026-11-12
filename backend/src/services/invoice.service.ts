@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 
 export class InvoiceService {
@@ -13,16 +14,19 @@ export class InvoiceService {
       throw new Error('Merchant not found');
     }
 
-    // 2. Calculate totals on the server (PDF Section 3.5)
-    let subtotal = 0;
-    const invoiceItemsData = items.map((item: any) => {
-      const itemTotal = item.quantity * item.unitPrice;
-      subtotal += itemTotal;
-      
+    // 2. Calculate totals on the server using Decimal arithmetic (PDF Section 3.4 & 3.5)
+    let subtotal = new Prisma.Decimal(0);
+    const invoiceItemsData = items.map((item: { name: string; quantity: number; unitPrice: number }) => {
+      const unitPrice = new Prisma.Decimal(item.unitPrice).toDecimalPlaces(6, Prisma.Decimal.ROUND_HALF_UP);
+      const itemTotal = unitPrice
+        .mul(item.quantity)
+        .toDecimalPlaces(6, Prisma.Decimal.ROUND_HALF_UP);
+      subtotal = subtotal.plus(itemTotal);
+
       return {
         name: item.name,
         quantity: item.quantity,
-        unitPrice: item.unitPrice,
+        unitPrice,
         total: itemTotal,
       };
     });
@@ -55,14 +59,35 @@ export class InvoiceService {
   static async getForMerchant(invoiceId: string, merchantId: string) {
     const invoice = await prisma.invoice.findFirst({
       where: { id: invoiceId, merchantId },
-      include: { items: true, transaction: { include: { settlement: true } } },
+      include: {
+        items: true,
+        merchant: { select: { name: true, feePercentage: true } },
+        transaction: { include: { settlement: true } },
+      },
     });
     if (!invoice) return null;
     const expired = invoice.status === 'PENDING' && invoice.expiresAt <= new Date();
+    if (expired) {
+      await prisma.invoice.updateMany({
+        where: { id: invoice.id, status: 'PENDING' },
+        data: { status: 'EXPIRED' },
+      });
+    }
+    const feePercentage = new Prisma.Decimal(invoice.merchant.feePercentage);
+    const serviceFee = invoice.totalAmount
+      .mul(feePercentage)
+      .div(100)
+      .toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
+    const netAmount = invoice.totalAmount.minus(serviceFee);
+
     return {
       id: invoice.id,
       status: expired ? 'EXPIRED' : invoice.status,
+      subtotal: invoice.subtotal.toFixed(2),
       totalAmount: invoice.totalAmount.toFixed(2),
+      serviceFee: serviceFee.toFixed(2),
+      netAmount: netAmount.toFixed(2),
+      feePercentage: invoice.merchant.feePercentage,
       currency: invoice.currency,
       expiresAt: invoice.expiresAt,
       items: invoice.items,

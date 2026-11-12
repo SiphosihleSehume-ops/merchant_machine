@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { handle } from '../lib/http.js';
-import { createReversalSchema } from '../lib/validators.js';
+import { createReversalSchema, respondReversalSchema } from '../lib/validators.js';
 import { AuthRequest, authenticateToken, requireRole } from '../middleware/auth.middleware.js';
 import { PaymentsService } from '../services/payments.service.js';
 import { HttpError } from '../lib/x402.js';
@@ -27,3 +27,16 @@ reversalsRouter.post('/', authenticateToken, requireRole('CUSTOMER'), handle<Aut
   const reversal = await PaymentsService.requestReversal(req.user!.customerId!, input);
   res.status(201).json({ success: true, data: reversal });
 }));
+
+// PATCH /api/v1/reversals/:id  { action: "APPROVE" | "DECLINE", reason?, refundTxHash? }
+const respondHandler = handle<AuthRequest>(async (req, res) => {
+  const input = respondReversalSchema.parse(req.body);
+  const reversal = await PaymentsService.respondToReversal(
+    req.user!.merchantId!,
+    req.params.id as string,
+    input,
+  );
+  res.json({ success: true, data: reversal });
+});
+reversalsRouter.patch('/:id', authenticateToken, requireRole('MERCHANT'), respondHandler);
+reversalsRouter.post('/:id/respond', authenticateToken, requireRole('MERCHANT'), respondHandler);

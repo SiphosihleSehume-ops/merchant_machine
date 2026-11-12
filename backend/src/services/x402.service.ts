@@ -10,6 +10,7 @@ import {
   zarPerToken,
   zarToTokenAtomic,
 } from '../lib/x402.js';
+import { WebhookService } from './webhook.service.js';
 
 export class X402Service {
   static async createIntent(data: any) {
@@ -112,6 +113,11 @@ export class X402Service {
       throw new HttpError(503, 'Payments not configured: no token addresses set');
     }
 
+    const serviceFee = invoice.totalAmount
+      .mul(new Prisma.Decimal(invoice.merchant.feePercentage))
+      .div(100)
+      .toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
+
     return {
       invoiceId: invoice.id,
       merchantId: invoice.merchantId,
@@ -120,6 +126,7 @@ export class X402Service {
       currency: invoice.currency,
       subtotal: invoice.subtotal.toFixed(2),
       totalAmount: invoice.totalAmount.toFixed(2),
+      serviceFee: serviceFee.toFixed(2),
       feePercentage: invoice.merchant.feePercentage,
       expiresAt: invoice.expiresAt,
       items: invoice.items.map((item) => ({
@@ -164,21 +171,30 @@ export class X402Service {
   }
 
   /** Releases a claim when on-chain settlement fails, so the invoice can be retried. */
-  static async markSettlementFailed(invoiceId: string) {
+  static async markSettlementFailed(invoiceId: string, reason?: string) {
+    const tx = await prisma.transaction.findUnique({ where: { invoiceId } });
     await prisma.transaction.updateMany({
       where: { invoiceId, status: 'PROCESSING' },
       data: { status: 'FAILED' },
     });
+    if (tx) {
+      await WebhookService.record(tx.merchantId, 'payment.failed', `payment.failed:${tx.id}`, {
+        transactionId: tx.id,
+        invoiceId,
+        reason: reason ?? 'On-chain settlement failed',
+      }).catch(() => undefined);
+    }
   }
 
   /**
-   * Records a settled payment: Transaction SETTLED, Invoice PAID, Settlement row and
-   * the double-entry ledger split (merchant payable / platform fee).
+   * Records a settled payment: Transaction SETTLED, Invoice PAID, Settlement row,
+   * the double-entry ledger split (merchant payable / platform fee), and an idempotent
+   * WebhookEvent.
    */
   static async settlePayment(
     invoiceId: string,
     txHash: string,
-    opts: { fxSnapshot?: Prisma.Decimal; asset?: string; payer?: string } = {},
+    opts: { fxSnapshot?: Prisma.Decimal; asset?: string; payer?: string; merchantId?: string } = {},
   ) {
     const payer = opts.payer?.toLowerCase();
     // Link the payment to a customer account if the paying wallet is registered
@@ -191,17 +207,25 @@ export class X402Service {
       include: { transaction: true, merchant: true },
     });
 
-    if (!invoice || !invoice.transaction) {
-      throw new Error('Invoice or Transaction not found');
+    if (!invoice) {
+      throw new HttpError(404, 'Invoice not found');
+    }
+
+    if (opts.merchantId && invoice.merchantId !== opts.merchantId) {
+      throw new HttpError(403, 'You do not have permission to settle this invoice');
     }
 
     if (invoice.status === 'PAID') {
-      throw new Error('Invoice is already paid');
+      throw new HttpError(409, 'Invoice is already paid');
+    }
+
+    if (invoice.status !== 'PENDING') {
+      throw new HttpError(409, `Invoice is ${invoice.status}`);
     }
 
     const destination = invoice.merchant.cryptoWallet;
     if (!destination) {
-      throw new Error('Merchant has no crypto wallet configured');
+      throw new HttpError(422, 'Merchant has no crypto wallet configured');
     }
 
     // 2. Calculate fees (PDF Section 3.4) with Decimal arithmetic.
@@ -223,16 +247,30 @@ export class X402Service {
         data: { status: 'PAID' },
       });
       if (paid.count !== 1) {
-        throw new Error('Invoice is already paid');
+        throw new HttpError(409, 'Invoice is already paid');
       }
 
+      const baseTransaction =
+        invoice.transaction ??
+        (await tx.transaction.create({
+          data: {
+            invoiceId: invoice.id,
+            merchantId: invoice.merchantId,
+            amount: invoice.totalAmount,
+            currency: invoice.currency,
+            type: 'CRYPTO',
+            status: 'PENDING',
+          },
+        }));
+
       const updatedTransaction = await tx.transaction.update({
-        where: { id: invoice.transaction!.id },
+        where: { id: baseTransaction.id },
         data: {
           status: 'SETTLED',
-          asset: opts.asset,
-          payerAddress: payer,
-          customerId: customer?.id,
+          asset: opts.asset ?? baseTransaction.asset ?? 'ZARK',
+          payerAddress: payer ?? baseTransaction.payerAddress,
+          customerId: customer?.id ?? baseTransaction.customerId,
+          idempotencyKey: `settle:${invoice.id}`,
         },
       });
 
@@ -265,9 +303,26 @@ export class X402Service {
           account: 'PLATFORM_FEE',
           type: 'CREDIT',
           amount: platformFee,
-          description: `${feePercentage.toString()}% Fee for Invoice #${invoice.id.substring(0, 8)}`,
+          description: `${feePercentage.toString()}% Service Fee for Invoice #${invoice.id.substring(0, 8)}`,
         },
       });
+
+      await WebhookService.record(
+        invoice.merchantId,
+        'payment.settled',
+        `payment.settled:${updatedTransaction.id}`,
+        {
+          transactionId: updatedTransaction.id,
+          invoiceId: invoice.id,
+          amount: totalAmount.toFixed(2),
+          serviceFee: platformFee.toFixed(2),
+          netAmount: merchantAmount.toFixed(2),
+          currency: invoice.currency,
+          asset: updatedTransaction.asset,
+          txHash,
+        },
+        tx,
+      );
 
       return updatedTransaction;
     });

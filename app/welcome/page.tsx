@@ -11,51 +11,80 @@ type Mode = "signin" | "signup";
 
 export default function Welcome() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { login, verifyOtp } = useAuth();
   const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [otp, setOtp] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [unverified, setUnverified] = useState(false);
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const switchMode = (m: Mode) => {
     setMode(m);
     setError(null);
-    setUnverified(false);
+    setNotice(null);
   };
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
-    setUnverified(false);
     setNotice(null);
+    const trimmedEmail = email.trim().toLowerCase();
     try {
       if (mode === "signup") {
-        await api("/auth/register", { body: { email, password }, auth: false });
-        setSentTo(email);
+        await api("/auth/register", {
+          body: { email: trimmedEmail, password },
+          auth: false,
+        });
+        setOtp("");
+        setSentTo(trimmedEmail);
       } else {
-        const session = await login(email, password);
+        const session = await login(trimmedEmail, password);
         router.replace(homeFor(session));
       }
     } catch (err) {
-      if (err instanceof ApiError && err.code === "EMAIL_NOT_VERIFIED") setUnverified(true);
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      if (err instanceof ApiError && err.code === "EMAIL_NOT_VERIFIED") {
+        setOtp("");
+        setSentTo(trimmedEmail);
+        setNotice("Your email isn't verified yet. Enter the 6-digit code sent to your email.");
+      } else {
+        setError(err instanceof Error ? err.message : "Something went wrong");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitOtp(e: React.FormEvent) {
+    e.preventDefault();
+    if (!sentTo || otp.length !== 6) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const session = await verifyOtp(sentTo, otp);
+      router.replace(homeFor(session));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Invalid or expired verification code");
     } finally {
       setBusy(false);
     }
   }
 
   async function resend(to: string) {
+    setError(null);
     setNotice(null);
     try {
-      await api("/auth/resend-verification", { body: { email: to }, auth: false });
-      setNotice("If the account exists and isn't verified yet, a new link is on its way.");
+      await api("/auth/resend-verification", {
+        body: { email: to },
+        auth: false,
+      });
+      setNotice("A new 6-digit verification code has been sent to your email.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not resend");
+      setError(err instanceof Error ? err.message : "Could not resend code");
     }
   }
 
@@ -66,19 +95,60 @@ export default function Welcome() {
           <div className="receipt-icon" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
             <MailCheck size={34} />
           </div>
-          <h1>Check your inbox</h1>
+          <h1>Enter verification code</h1>
           <p>
-            We sent a verification link to <strong style={{ color: "var(--text)" }}>{sentTo}</strong>. Open it to
-            activate your account, then sign in.
+            We sent a 6-digit OTP to <strong style={{ color: "var(--text)" }}>{sentTo}</strong>. Enter it below to
+            verify your account.
           </p>
         </div>
-        {notice && <div className="alert ok">{notice}</div>}
-        <div className="stack" style={{ padding: 0 }}>
-          <button className="btn primary" onClick={() => { setSentTo(null); switchMode("signin"); }}>
-            I&apos;ve verified, sign in
+
+        <form className="auth-card" onSubmit={submitOtp} noValidate>
+          <div className="form-field">
+            <label htmlFor="otp">6-digit OTP code</label>
+            <input
+              id="otp"
+              className="text-input"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="000000"
+              maxLength={6}
+              required
+              value={otp}
+              onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              style={{
+                textAlign: "center",
+                fontSize: 24,
+                fontWeight: 700,
+                letterSpacing: "0.35em",
+              }}
+            />
+          </div>
+
+          {error && <div className="alert bad" role="alert">{error}</div>}
+          {notice && <div className="alert ok">{notice}</div>}
+
+          <button className="btn primary" type="submit" disabled={busy || otp.length !== 6}>
+            {busy ? "Verifying…" : "Verify & continue"}
           </button>
-          <button className="btn ghost" onClick={() => resend(sentTo)}>Resend link</button>
-        </div>
+          <button type="button" className="btn ghost" onClick={() => resend(sentTo)} disabled={busy}>
+            Resend code
+          </button>
+          <button
+            type="button"
+            className="link-btn"
+            style={{ alignSelf: "center" }}
+            onClick={() => {
+              setSentTo(null);
+              setOtp("");
+              setError(null);
+              setNotice(null);
+              switchMode("signin");
+            }}
+          >
+            Back to sign in
+          </button>
+        </form>
       </main>
     );
   }
@@ -126,16 +196,7 @@ export default function Welcome() {
           {mode === "signup" && <span className="muted" style={{ fontSize: 13 }}>At least 8 characters.</span>}
         </div>
 
-        {error && (
-          <div className="alert bad" role="alert">
-            {error}
-            {unverified && (
-              <div style={{ marginTop: 6 }}>
-                <button type="button" className="link-btn" onClick={() => resend(email)}>Resend verification link</button>
-              </div>
-            )}
-          </div>
-        )}
+        {error && <div className="alert bad" role="alert">{error}</div>}
         {notice && <div className="alert ok">{notice}</div>}
 
         <button className="btn primary" type="submit" disabled={busy || !email || !password}>

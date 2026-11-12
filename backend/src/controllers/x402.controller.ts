@@ -1,11 +1,12 @@
 import { Request, Response } from 'express';
 import { X402Service } from '../services/x402.service.js';
-import { createIntentSchema } from '../lib/validators.js';
-import { currentQuote } from '../lib/x402.js';
+import { createIntentSchema, settlePaymentSchema } from '../lib/validators.js';
+import { currentQuote, HttpError } from '../lib/x402.js';
+import { AuthRequest } from '../middleware/auth.middleware.js';
 
 export class X402Controller {
   // 1. Creates the database record for the payment intent
-  static async createIntent(req: Request, res: Response) {
+  static async createIntent(req: AuthRequest, res: Response) {
     try {
       const validatedData = createIntentSchema.parse({ body: req.body });
       const intent = await X402Service.createIntent(validatedData.body);
@@ -42,6 +43,10 @@ export class X402Controller {
       data: {
         invoiceId: quote.invoiceId,
         merchantName: quote.merchantName,
+        items: quote.items,
+        subtotal: quote.subtotal,
+        serviceFee: quote.serviceFee,
+        feePercentage: quote.feePercentage,
         total: quote.totalAmount,
         currency: quote.currency,
         // The on-chain tx hash is returned in the PAYMENT-RESPONSE header
@@ -49,21 +54,15 @@ export class X402Controller {
     });
   }
 
-  // 3. Settles the payment and updates the double-entry ledger
-  static async settlePayment(req: Request, res: Response) {
+  // 3. Settles the payment and updates the double-entry ledger (authenticated fallback)
+  static async settlePayment(req: AuthRequest, res: Response) {
     try {
-      // FIX: Cast params to string
-      const invoiceId = req.params.invoiceId as string; 
-      const { txHash } = req.body;
+      const invoiceId = req.params.invoiceId as string;
+      const { txHash } = settlePaymentSchema.parse(req.body);
 
-      if (!txHash) {
-        return res.status(400).json({ 
-          success: false,
-          error: 'txHash is required to settle the payment' 
-        });
-      }
-
-      const transaction = await X402Service.settlePayment(invoiceId, txHash);
+      const transaction = await X402Service.settlePayment(invoiceId, txHash, {
+        merchantId: req.user?.role === 'MERCHANT' ? req.user.merchantId : undefined,
+      });
 
       res.status(200).json({
         success: true,
@@ -71,7 +70,15 @@ export class X402Controller {
         data: transaction,
       });
     } catch (error: any) {
-      res.status(400).json({
+      if (error instanceof Error && 'errors' in error) {
+        return res.status(400).json({
+          success: false,
+          error: (error as any).errors[0]?.message || 'Validation failed',
+          details: (error as any).errors,
+        });
+      }
+      const status = error instanceof HttpError ? error.status : 400;
+      res.status(status).json({
         success: false,
         error: error.message || 'Failed to settle payment',
       });

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { X402_NETWORK } from './x402.js';
 
 // Merchant registration schema
 export const createMerchantSchema = z.object({
@@ -29,10 +30,15 @@ export const createInvoiceSchema = z.object({
 export const createIntentSchema = z.object({
   body: z.object({
     invoiceId: z.string().uuid("Invalid invoice ID"),
-    network: z.string().default("eip155:84532"), // Base Sepolia
+    network: z.string().default(X402_NETWORK),
     payTo: z.string().min(1, "PayTo address is required"),
   }),
 });
+
+export const settlePaymentSchema = z.object({
+  txHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/, 'txHash must be a 32-byte 0x-prefixed hex hash'),
+});
+
 // ---------------- Auth ----------------
 const email = z.string().trim().toLowerCase().email('Invalid email format');
 
@@ -50,6 +56,11 @@ export const emailOnlySchema = z.object({ email });
 
 export const verifyEmailSchema = z.object({
   token: z.string().min(32, 'Invalid verification token'),
+});
+
+export const verifyOtpSchema = z.object({
+  email,
+  otp: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit verification code'),
 });
 
 const evmAddress = z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid wallet address');
@@ -72,11 +83,41 @@ export const linkWalletSchema = z.object({
   signature: z.string().regex(/^0x[a-fA-F0-9]+$/, 'Invalid signature'),
 });
 
+/**
+ * PDF Section 3.6: POPIA-minimised KYC tier upgrade.
+ * Never persists raw ID numbers or document scans; accepts provider attestation or consent.
+ */
+export const customerKycSchema = z.object({
+  fullName: z.string().trim().min(2, 'Full name is required').max(120),
+  countryCode: z.string().trim().length(2, 'ISO 2-letter country code required').default('ZA'),
+  popiaConsent: z.literal(true, {
+    errorMap: () => ({ message: 'POPIA consent is required for KYC verification' }),
+  }),
+});
+
 // ---------------- Reversals ----------------
 export const createReversalSchema = z.object({
   transactionId: z.string().uuid('Invalid transaction ID'),
+  /** Optional partial refund amount in ZAR (defaults to full net amount minus service fee). */
+  amount: z.number().positive('Refund amount must be greater than 0').optional(),
   reason: z.string().trim().max(500).optional(),
   acknowledgeNonRefundableFee: z.literal(true, {
     errorMap: () => ({ message: 'You must acknowledge that the service fee is non-refundable' }),
   }),
 });
+
+export const respondReversalSchema = z
+  .object({
+    action: z.enum(['APPROVE', 'DECLINE']).optional(),
+    status: z.enum(['APPROVED', 'DECLINED']).optional(),
+    reason: z.string().trim().max(500).optional(),
+    refundTxHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/, 'Invalid refundTxHash').optional(),
+  })
+  .refine((v) => Boolean(v.action || v.status), {
+    message: 'Provide action ("APPROVE" | "DECLINE") or status ("APPROVED" | "DECLINED")',
+  })
+  .transform((v) => ({
+    decision: (v.action === 'APPROVE' || v.status === 'APPROVED' ? 'APPROVE' : 'DECLINE') as 'APPROVE' | 'DECLINE',
+    reason: v.reason,
+    refundTxHash: v.refundTxHash as `0x${string}` | undefined,
+  }));
