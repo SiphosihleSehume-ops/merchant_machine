@@ -33,10 +33,24 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2Zjc1Z
 ### 4. Request Payment (Simulate Scanning QR)
 GET http://localhost:4000/api/v1/x402/pay/d9ff1d30-a625-4381-bff0-cf73b97f70d7
 
-### 5. Settle Payment (Simulate Customer Paid)
+### 5. Settle Payment (Authenticated fallback - requires valid 32-byte 0x txHash)
 POST http://localhost:4000/api/v1/x402/settle/d9ff1d30-a625-4381-bff0-cf73b97f70d7
 Content-Type: application/json
+Authorization: Bearer <YOUR_JWT_TOKEN>
 
 {
-  "txHash": "0xabc1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+  "txHash": "0xabc1234567890abcdef1234567890abcdef1234567890abcdef1234567890abc"
 }
+
+### 6. Merchant Approves Reversal
+PATCH http://localhost:4000/api/v1/reversals/<REVERSAL_ID>
+Content-Type: application/json
+Authorization: Bearer <MERCHANT_JWT_TOKEN>
+
+{
+  "action": "APPROVE"
+}
+
+### 7. Merchant Ledger Summary
+GET http://localhost:4000/api/v1/merchants/me/ledger
+Authorization: Bearer <MERCHANT_JWT_TOKEN>

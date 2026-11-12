@@ -12,10 +12,10 @@ import { ExactEvmScheme } from '@x402/evm/exact/client';
 import { toClientEvmSigner } from '@x402/evm';
 import { walletLinkMessage } from '../src/services/customer.service.js';
 
-const API = 'http://localhost:4100/api/v1';
+const API = (process.env.API_URL || `http://localhost:${process.env.PORT || 4100}/api/v1`).replace(/\/$/, '');
 const LOG = process.argv[2];
-const ZARK = '0x5fbdb2315678afecb367f032d93f642f64180aa3' as const;
-const USDC = '0xe7f1725e7734ce288f8367e1bb143e90bb3f0512' as const;
+const ZARK = (process.env.TOKEN_ZARK_ADDRESS || '0x5fbdb2315678afecb367f032d93f642f64180aa3').toLowerCase() as `0x${string}`;
+const USDC = (process.env.TOKEN_USDC_ADDRESS || '0xe7f1725e7734ce288f8367e1bb143e90bb3f0512').toLowerCase() as `0x${string}`;
 // Fresh wallet each run with zero ETH: proves the customer pays gaslessly
 const customerAcct = privateKeyToAccount(generatePrivateKey());
 // Hardhat account 0 = token owner (deployer) and facilitator relayer
@@ -31,10 +31,10 @@ async function call(method: string, path: string, body?: unknown, token?: string
   const r = await fetch(API + path, { method, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: body ? JSON.stringify(body) : undefined });
   return { status: r.status, json: await r.json().catch(() => null) as any };
 }
-const linkFor = (email: string) => {
+const otpFor = (email: string) => {
   const lines = readFileSync(LOG, 'utf8').split('\n');
-  const i = lines.findLastIndex((l) => l.includes(`Verification link for ${email}`));
-  return new URL(lines[i + 1].trim()).searchParams.get('token')!;
+  const line = lines.findLast((l) => l.includes(`Verification OTP for ${email}:`));
+  return line?.split(':').pop()?.trim() ?? '';
 };
 // Unique per run so the script can be re-run without resetting the database
 const RUN = Date.now().toString(36);
@@ -46,10 +46,13 @@ async function signUp(email: string) {
   const early = await call('POST', '/auth/login', { email, password: 'password123' });
   check('login before verify -> 403 EMAIL_NOT_VERIFIED', early.status === 403 && early.json.code === 'EMAIL_NOT_VERIFIED', early);
   await sleep(200);
-  const v = await call('POST', '/auth/verify-email', { token: linkFor(email) });
-  check('verify email -> 200', v.status === 200, v);
-  const again = await call('POST', '/auth/verify-email', { token: linkFor(email) });
-  check('reuse verification link -> 400', again.status === 400, again);
+  const otp = reg.json?.data?.devOtp || otpFor(email);
+  const badOtp = await call('POST', '/auth/verify-otp', { email, otp: '000000' });
+  check('wrong OTP -> 400', badOtp.status === 400, badOtp);
+  const v = await call('POST', '/auth/verify-otp', { email, otp });
+  check('verify OTP -> 200 with session', v.status === 200 && typeof v.json.data.token === 'string', v);
+  const again = await call('POST', '/auth/verify-otp', { email, otp });
+  check('reuse OTP -> 400', again.status === 400, again);
   const bad = await call('POST', '/auth/login', { email, password: 'wrong-password' });
   check('wrong password -> 401', bad.status === 401, bad);
   const login = await call('POST', '/auth/login', { email, password: 'password123' });
@@ -138,6 +141,30 @@ const dup = await call('POST', '/reversals', { transactionId: t.id, acknowledgeN
 check('duplicate reversal -> 409', dup.status === 409, dup);
 const mRev = await call('GET', '/reversals', undefined, mTok);
 check('merchant sees reversal request', mRev.json.data.length === 1, mRev.json);
+
+const cannotApprove = await call('PATCH', `/reversals/${rev.json.data.id}`, { action: 'APPROVE' }, cTok);
+check('customer cannot approve reversal -> 403', cannotApprove.status === 403, cannotApprove);
+const approved = await call('PATCH', `/reversals/${rev.json.data.id}`, { action: 'APPROVE' }, mTok);
+check('merchant approves reversal -> COMPLETED with refundTxHash', approved.status === 200 && approved.json.data.status === 'COMPLETED' && /^0x[0-9a-f]{64}$/.test(approved.json.data.refundTxHash), approved);
+const dupApprove = await call('PATCH', `/reversals/${rev.json.data.id}`, { action: 'APPROVE' }, mTok);
+check('idempotent: second approve -> 409', dupApprove.status === 409, dupApprove);
+
+const afterRefund = await bal(ZARK, customerAcct.address);
+check('on-chain refund: customer received +58.20 ZARK', afterRefund - after.cust === 58_200000n, { after: after.cust, afterRefund });
+
+const txsAfter = await call('GET', '/transactions', undefined, cTok);
+check('transaction display status is REVERSED', txsAfter.json.data[0]?.status === 'REVERSED', txsAfter.json.data[0]);
+
+const ledger = await call('GET', '/merchants/me/ledger', undefined, mTok);
+check('ledger net payable is 0.00 and platform fee is 1.80', ledger.status === 200 && ledger.json.data.balances.merchantPayable === '0.00' && ledger.json.data.balances.platformFees === '1.80', ledger.json);
+
+const webhooks = await call('GET', '/merchants/me/webhooks', undefined, mTok);
+check('webhooks recorded for payment.settled, reversal.requested, reversal.completed', webhooks.status === 200 && webhooks.json.data.length === 3, webhooks.json);
+
+const kycBefore = await call('GET', '/customers/me', undefined, cTok);
+check('customer starts at TIER_1_BASIC', kycBefore.status === 200 && kycBefore.json.data.tier === 'TIER_1_BASIC', kycBefore.json);
+const kycAfter = await call('POST', '/customers/me/kyc', { fullName: 'Test Buyer', countryCode: 'ZA', popiaConsent: true }, cTok);
+check('customer KYC upgrades to TIER_2_VERIFIED', kycAfter.status === 200 && kycAfter.json.data.tier === 'TIER_2_VERIFIED', kycAfter.json);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

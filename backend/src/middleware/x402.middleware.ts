@@ -101,6 +101,7 @@ export const x402InvoicePayment = paymentMiddleware(
               merchant: { name: q.merchantName, wallet: q.payTo },
               items: q.items,
               subtotal: q.subtotal,
+              serviceFee: q.serviceFee,
               total: q.totalAmount,
               currency: q.currency,
               merchantFeePercentage: q.feePercentage,

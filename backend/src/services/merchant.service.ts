@@ -1,15 +1,16 @@
 import { prisma } from '../lib/prisma.js';
-import { Prisma } from '@prisma/client'; // <-- Import Prisma
+import { Prisma } from '@prisma/client';
 import bcrypt from 'bcrypt';
-import jwt from 'jsonwebtoken'; 
+import { signToken } from '../middleware/auth.middleware.js';
 
 export class MerchantService {
   static async registerMerchant(data: any) {
     const { email, password, name, fiatWallet, cryptoWallet } = data;
+    const normalizedEmail = String(email).trim().toLowerCase();
 
     // 1. Check if user already exists
     const existingUser = await prisma.user.findUnique({
-      where: { email },
+      where: { email: normalizedEmail },
     });
 
     if (existingUser) {
@@ -21,13 +22,14 @@ export class MerchantService {
     const passwordHash = await bcrypt.hash(password, salt);
 
     // 3. Create User and Merchant in a single transaction
-    const newMerchant = await prisma.$transaction(async (tx: Prisma.TransactionClient) => { // <-- Added type here
+    const newMerchant = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const user = await tx.user.create({
         data: {
-          email,
+          email: normalizedEmail,
           passwordHash,
           role: 'MERCHANT',
           kycStatus: 'VERIFIED', // Auto-verify for demo purposes
+          emailVerifiedAt: new Date(),
         },
       });
 
@@ -57,13 +59,14 @@ export class MerchantService {
   // Login method for merchants
   static async loginMerchant(data: any) {
     const { email, password } = data;
+    const normalizedEmail = String(email).trim().toLowerCase();
 
     const user = await prisma.user.findUnique({
-      where: { email },
+      where: { email: normalizedEmail },
       include: { merchant: true },
     });
 
-    if (!user || user.role !== 'MERCHANT') {
+    if (!user || !user.merchant) {
       throw new Error('Invalid email or password');
     }
 
@@ -72,16 +75,56 @@ export class MerchantService {
       throw new Error('Invalid email or password');
     }
 
-    const token = jwt.sign(
-      { 
-        userId: user.id, 
-        merchantId: user.merchant!.id,
-        role: user.role 
-      },
-      process.env.JWT_SECRET as string,
-      { expiresIn: '24h' }
-    );
+    const token = signToken({
+      userId: user.id,
+      email: user.email,
+      merchantId: user.merchant.id,
+      role: 'MERCHANT',
+    });
 
     return { token, merchant: user.merchant };
+  }
+
+  /**
+   * PDF Section 3.8: Double-entry ledger summary and entry history for a merchant.
+   */
+  static async getLedgerSummary(merchantId: string) {
+    const entries = await prisma.ledgerEntry.findMany({
+      where: { merchantId },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+
+    const all = await prisma.ledgerEntry.groupBy({
+      by: ['account', 'type'],
+      where: { merchantId },
+      _sum: { amount: true },
+    });
+
+    const sumFor = (account: 'MERCHANT_PAYABLE' | 'PLATFORM_FEE' | 'MERCHANT_RESERVE', type: 'CREDIT' | 'DEBIT') =>
+      all.find((row) => row.account === account && row.type === type)?._sum.amount ?? new Prisma.Decimal(0);
+
+    const merchantPayable = sumFor('MERCHANT_PAYABLE', 'CREDIT').minus(sumFor('MERCHANT_PAYABLE', 'DEBIT'));
+    const platformFees = sumFor('PLATFORM_FEE', 'CREDIT').minus(sumFor('PLATFORM_FEE', 'DEBIT'));
+    const merchantReserve = sumFor('MERCHANT_RESERVE', 'CREDIT').minus(sumFor('MERCHANT_RESERVE', 'DEBIT'));
+
+    return {
+      balances: {
+        merchantPayable: merchantPayable.toFixed(2),
+        platformFees: platformFees.toFixed(2),
+        merchantReserve: merchantReserve.toFixed(2),
+        currency: 'ZAR',
+      },
+      entries: entries.map((e) => ({
+        id: e.id,
+        transactionId: e.transactionId,
+        reversalId: e.reversalId,
+        account: e.account,
+        type: e.type,
+        amount: e.amount.toFixed(2),
+        description: e.description,
+        createdAt: e.createdAt,
+      })),
+    };
   }
 }

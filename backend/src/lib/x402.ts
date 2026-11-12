@@ -105,6 +105,7 @@ export interface InvoiceQuote {
   currency: string;
   subtotal: string;
   totalAmount: string;
+  serviceFee: string;
   feePercentage: number;
   expiresAt: Date;
   items: { name: string; quantity: number; unitPrice: string; total: string }[];
