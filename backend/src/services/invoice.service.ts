@@ -50,4 +50,30 @@ export class InvoiceService {
 
     return invoice;
   }
+
+  /** Merchant-scoped invoice lookup (used to poll payment status on the QR screen). */
+  static async getForMerchant(invoiceId: string, merchantId: string) {
+    const invoice = await prisma.invoice.findFirst({
+      where: { id: invoiceId, merchantId },
+      include: { items: true, transaction: { include: { settlement: true } } },
+    });
+    if (!invoice) return null;
+    const expired = invoice.status === 'PENDING' && invoice.expiresAt <= new Date();
+    return {
+      id: invoice.id,
+      status: expired ? 'EXPIRED' : invoice.status,
+      totalAmount: invoice.totalAmount.toFixed(2),
+      currency: invoice.currency,
+      expiresAt: invoice.expiresAt,
+      items: invoice.items,
+      payment: invoice.transaction
+        ? {
+            status: invoice.transaction.status,
+            asset: invoice.transaction.asset,
+            payerAddress: invoice.transaction.payerAddress,
+            txHash: invoice.transaction.settlement?.txHash ?? null,
+          }
+        : null,
+    };
+  }
 }

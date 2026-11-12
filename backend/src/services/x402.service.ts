@@ -1,5 +1,15 @@
 import { prisma } from '../lib/prisma.js';
 import { Prisma } from '@prisma/client';
+import {
+  EVM_ADDRESS_RE,
+  HttpError,
+  InvoiceQuote,
+  PAYMENT_TOKENS,
+  PaymentOptionQuote,
+  TOKENS,
+  zarPerToken,
+  zarToTokenAtomic,
+} from '../lib/x402.js';
 
 export class X402Service {
   static async createIntent(data: any) {
@@ -51,14 +61,134 @@ export class X402Service {
     });
 
     return intent;
-  } // <-- CLOSING BRACE FOR createIntent
+  }
 
-  // NEW METHOD STARTS HERE
-  static async settlePayment(invoiceId: string, txHash: string) {
-    // 1. Find the invoice and its transaction
+  /**
+   * Loads an invoice (with items and merchant) and checks it can be paid right now.
+   * Throws HttpError 404 / 409 / 410 / 422 so the challenge never quotes a stale or
+   * unpayable invoice.
+   */
+  static async getPayableQuote(invoiceId: string): Promise<InvoiceQuote> {
     const invoice = await prisma.invoice.findUnique({
       where: { id: invoiceId },
-      include: { transaction: true },
+      include: { items: true, merchant: true },
+    });
+
+    if (!invoice) {
+      throw new HttpError(404, 'Invoice not found');
+    }
+
+    if (invoice.status !== 'PENDING') {
+      throw new HttpError(409, `Invoice is ${invoice.status}`);
+    }
+
+    if (invoice.expiresAt <= new Date()) {
+      // Lazily record the expiry; conditional so we never overwrite a concurrent PAID.
+      await prisma.invoice.updateMany({
+        where: { id: invoice.id, status: 'PENDING' },
+        data: { status: 'EXPIRED' },
+      });
+      throw new HttpError(410, 'Invoice has expired');
+    }
+
+    const wallet = invoice.merchant.cryptoWallet;
+    if (!wallet || !EVM_ADDRESS_RE.test(wallet)) {
+      throw new HttpError(422, 'Merchant has no valid crypto wallet configured');
+    }
+
+    const options: PaymentOptionQuote[] = PAYMENT_TOKENS.flatMap((symbol) => {
+      const token = TOKENS[symbol];
+      if (!token.address) return []; // not deployed / not configured
+      const rate = zarPerToken(symbol);
+      return [{
+        symbol,
+        asset: token.address,
+        amountAtomic: zarToTokenAtomic(invoice.totalAmount, rate, token.decimals),
+        zarPerToken: rate.toString(),
+        eip712: { name: token.eip712Name, version: token.eip712Version },
+      }];
+    });
+    if (options.length === 0) {
+      throw new HttpError(503, 'Payments not configured: no token addresses set');
+    }
+
+    return {
+      invoiceId: invoice.id,
+      merchantId: invoice.merchantId,
+      merchantName: invoice.merchant.name,
+      payTo: wallet,
+      currency: invoice.currency,
+      subtotal: invoice.subtotal.toFixed(2),
+      totalAmount: invoice.totalAmount.toFixed(2),
+      feePercentage: invoice.merchant.feePercentage,
+      expiresAt: invoice.expiresAt,
+      items: invoice.items.map((item) => ({
+        name: item.name,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice.toFixed(2),
+        total: item.total.toFixed(2),
+      })),
+      options,
+    };
+  }
+
+  /**
+   * Claims the invoice for a verified payment before the facilitator settles on-chain.
+   * Moves its Transaction to PROCESSING atomically, so two concurrent payers cannot
+   * both reach settlement. Returns false if someone else already holds the claim.
+   */
+  static async claimForSettlement(quote: InvoiceQuote): Promise<boolean> {
+    return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      // Ensure a Transaction exists (the intent endpoint is optional for x402 clients)
+      await tx.transaction.upsert({
+        where: { invoiceId: quote.invoiceId },
+        create: {
+          invoiceId: quote.invoiceId,
+          merchantId: quote.merchantId,
+          amount: new Prisma.Decimal(quote.totalAmount),
+          currency: quote.currency,
+          type: 'CRYPTO',
+          status: 'PENDING',
+        },
+        update: {},
+      });
+
+      // FAILED is claimable again so a customer can retry after a failed settlement
+      const claimed = await tx.transaction.updateMany({
+        where: { invoiceId: quote.invoiceId, status: { in: ['PENDING', 'FAILED'] } },
+        data: { status: 'PROCESSING' },
+      });
+
+      return claimed.count === 1;
+    });
+  }
+
+  /** Releases a claim when on-chain settlement fails, so the invoice can be retried. */
+  static async markSettlementFailed(invoiceId: string) {
+    await prisma.transaction.updateMany({
+      where: { invoiceId, status: 'PROCESSING' },
+      data: { status: 'FAILED' },
+    });
+  }
+
+  /**
+   * Records a settled payment: Transaction SETTLED, Invoice PAID, Settlement row and
+   * the double-entry ledger split (merchant payable / platform fee).
+   */
+  static async settlePayment(
+    invoiceId: string,
+    txHash: string,
+    opts: { fxSnapshot?: Prisma.Decimal; asset?: string; payer?: string } = {},
+  ) {
+    const payer = opts.payer?.toLowerCase();
+    // Link the payment to a customer account if the paying wallet is registered
+    const customer = payer
+      ? await prisma.customer.findUnique({ where: { walletAddress: payer } })
+      : null;
+
+    const invoice = await prisma.invoice.findUnique({
+      where: { id: invoiceId },
+      include: { transaction: true, merchant: true },
     });
 
     if (!invoice || !invoice.transaction) {
@@ -69,38 +199,54 @@ export class X402Service {
       throw new Error('Invoice is already paid');
     }
 
-    // 2. Calculate fees (PDF Section 3.4)
+    const destination = invoice.merchant.cryptoWallet;
+    if (!destination) {
+      throw new Error('Merchant has no crypto wallet configured');
+    }
+
+    // 2. Calculate fees (PDF Section 3.4) with Decimal arithmetic.
+    // The fee is rounded to the ledger precision and the merchant gets the remainder,
+    // so the two credits always sum exactly to the invoice total.
     const totalAmount = invoice.totalAmount;
-    const feePercentage = 3.0;
-    const platformFee = totalAmount * (feePercentage / 100);
-    const merchantAmount = totalAmount - platformFee;
+    const feePercentage = new Prisma.Decimal(invoice.merchant.feePercentage);
+    const platformFee = totalAmount
+      .mul(feePercentage)
+      .div(100)
+      .toDecimalPlaces(6, Prisma.Decimal.ROUND_HALF_UP);
+    const merchantAmount = totalAmount.minus(platformFee);
 
     // 3. Update DB in a transaction
     const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      // Update Transaction
-      const updatedTransaction = await tx.transaction.update({
-        where: { id: invoice.transaction!.id },
-        data: { status: 'SETTLED' },
-      });
-
-      // Update Invoice
-      await tx.invoice.update({
-        where: { id: invoiceId },
+      // Conditional update guards against a concurrent settlement of the same invoice
+      const paid = await tx.invoice.updateMany({
+        where: { id: invoiceId, status: { not: 'PAID' } },
         data: { status: 'PAID' },
       });
+      if (paid.count !== 1) {
+        throw new Error('Invoice is already paid');
+      }
 
-      // Create Settlement record
+      const updatedTransaction = await tx.transaction.update({
+        where: { id: invoice.transaction!.id },
+        data: {
+          status: 'SETTLED',
+          asset: opts.asset,
+          payerAddress: payer,
+          customerId: customer?.id,
+        },
+      });
+
       await tx.settlement.create({
         data: {
           transactionId: updatedTransaction.id,
-          destination: '0xMerchantWalletAddressHere', // In reality, pull from Merchant profile
+          destination,
           rail: 'X402_FACILITATOR',
-          txHash: txHash,
+          txHash,
+          fxSnapshot: opts.fxSnapshot,
         },
       });
 
       // Create Double-Entry Ledger Records (PDF Section 3.8)
-      // Credit the Merchant Payable Account
       await tx.ledgerEntry.create({
         data: {
           merchantId: invoice.merchantId,
@@ -112,7 +258,6 @@ export class X402Service {
         },
       });
 
-      // Credit the Platform Fee Account
       await tx.ledgerEntry.create({
         data: {
           merchantId: invoice.merchantId,
@@ -120,7 +265,7 @@ export class X402Service {
           account: 'PLATFORM_FEE',
           type: 'CREDIT',
           amount: platformFee,
-          description: `3% Fee for Invoice #${invoice.id.substring(0, 8)}`,
+          description: `${feePercentage.toString()}% Fee for Invoice #${invoice.id.substring(0, 8)}`,
         },
       });
 
@@ -128,5 +273,5 @@ export class X402Service {
     });
 
     return result;
-  } // <-- CLOSING BRACE FOR settlePayment
-} // <-- CLOSING BRACE FOR CLASS
+  }
+}

@@ -1,13 +1,15 @@
+// Must be the first import: other modules read process.env at load time
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import { prisma } from './lib/prisma.js'; // Note the .js extension for ESM
 import merchantRoutes from './routes/merchant.routes.js';
 import invoiceRoutes from './routes/invoice.routes.js';
-import x402Routes from './routes/x402.routes.js'; // <-- ADDED MISSING IMPORT
+import x402Routes from './routes/x402.routes.js';
+import authRoutes from './routes/auth.routes.js';
+import customerRoutes from './routes/customer.routes.js';
+import { reversalsRouter, transactionsRouter } from './routes/payments.routes.js';
 
-// Load environment variables from .env file
-dotenv.config();
 
 const app = express();
 
@@ -16,7 +18,11 @@ const app = express();
 // ==========================================
 
 // Allow requests from your Next.js frontend (runs on localhost:3000)
-app.use(cors());
+app.use(cors({
+  origin: process.env.CORS_ORIGIN?.split(',') ?? true,
+  // Browser x402 clients must be able to read the challenge and receipt headers
+  exposedHeaders: ['PAYMENT-REQUIRED', 'PAYMENT-RESPONSE'],
+}));
 
 // Parse incoming JSON payloads automatically
 app.use(express.json());
@@ -59,6 +65,10 @@ app.get('/api/v1/db-status', async (req, res) => {
 // FEATURE ROUTES
 // ==========================================
 
+app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/customers', customerRoutes);
+app.use('/api/v1/transactions', transactionsRouter);
+app.use('/api/v1/reversals', reversalsRouter);
 app.use('/api/v1/merchants', merchantRoutes);
 app.use('/api/v1/invoices', invoiceRoutes); // <-- CLEANED UP (removed duplicate)
 app.use('/api/v1/x402', x402Routes);       // <-- ADDED X402 ROUTES
