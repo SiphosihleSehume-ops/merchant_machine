@@ -6,31 +6,50 @@ import { EVM_ADDRESS_RE, HttpError } from '../lib/x402.js';
 import { ActiveRole, signToken } from '../middleware/auth.middleware.js';
 
 const VERIFY_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
-const RESEND_COOLDOWN_MS = 60 * 1000;
+const VERIFY_OTP_TTL_MS = 15 * 60 * 1000;
+const RESEND_COOLDOWN_MS = 15 * 1000;
 
 // Same message whether or not the email exists, to avoid account enumeration
-const GENERIC_SENT = 'If that email can be used, a verification link has been sent.';
+const GENERIC_SENT = 'We sent a 6-digit verification code to your email.';
 
 // Real hash so bcrypt.compare does equal work for unknown emails
 const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', 10);
 
 const sha256 = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
+const otpHash = (userId: string, otp: string) => sha256(`otp:${userId}:${otp}`);
 
-async function issueVerification(userId: string, email: string) {
+async function issueVerification(userId: string, email: string): Promise<void> {
   const recent = await prisma.emailVerificationToken.findFirst({
-    where: { userId, createdAt: { gt: new Date(Date.now() - RESEND_COOLDOWN_MS) } },
+    where: { userId, usedAt: null, createdAt: { gt: new Date(Date.now() - RESEND_COOLDOWN_MS) } },
   });
-  if (recent) return; // throttle resends
+  if (recent) return; // throttle rapid resends
+
+  // Invalidate any previous unused tokens for this user before issuing a fresh OTP + link
+  await prisma.emailVerificationToken.updateMany({
+    where: { userId, usedAt: null },
+    data: { usedAt: new Date() },
+  });
 
   const token = crypto.randomBytes(32).toString('base64url');
-  await prisma.emailVerificationToken.create({
-    data: {
-      userId,
-      tokenHash: sha256(token),
-      expiresAt: new Date(Date.now() + VERIFY_TOKEN_TTL_MS),
-    },
+  const otp = String(crypto.randomInt(100000, 1000000));
+  const now = Date.now();
+
+  await prisma.emailVerificationToken.createMany({
+    data: [
+      {
+        userId,
+        tokenHash: sha256(token),
+        expiresAt: new Date(now + VERIFY_TOKEN_TTL_MS),
+      },
+      {
+        userId,
+        tokenHash: otpHash(userId, otp),
+        expiresAt: new Date(now + VERIFY_OTP_TTL_MS),
+      },
+    ],
   });
-  await sendVerificationEmail(email, token);
+
+  await sendVerificationEmail(email, token, otp);
 }
 
 async function sessionFor(userId: string, role?: ActiveRole) {
@@ -53,6 +72,7 @@ async function sessionFor(userId: string, role?: ActiveRole) {
       id: user.id,
       email: user.email,
       role: role ?? null,
+      kycStatus: user.kycStatus,
       hasMerchantProfile: !!user.merchant,
       hasCustomerProfile: !!user.customer,
       merchant: user.merchant
@@ -68,8 +88,10 @@ export class AuthService {
     const existing = await prisma.user.findUnique({ where: { email } });
 
     if (existing) {
-      // Unverified: resend. Verified: say nothing (no enumeration).
-      if (!existing.emailVerifiedAt) await issueVerification(existing.id, email);
+      // Unverified: resend a fresh OTP. Verified: say nothing (no enumeration).
+      if (!existing.emailVerifiedAt) {
+        await issueVerification(existing.id, email);
+      }
       return { message: GENERIC_SENT };
     }
 
@@ -81,7 +103,9 @@ export class AuthService {
 
   static async resendVerification(email: string) {
     const user = await prisma.user.findUnique({ where: { email } });
-    if (user && !user.emailVerifiedAt) await issueVerification(user.id, email);
+    if (user && !user.emailVerifiedAt) {
+      await issueVerification(user.id, email);
+    }
     return { message: GENERIC_SENT };
   }
 
@@ -94,12 +118,44 @@ export class AuthService {
       throw new HttpError(400, 'This verification link is invalid or has expired.', 'INVALID_TOKEN');
     }
 
+    const now = new Date();
     await prisma.$transaction([
-      prisma.emailVerificationToken.update({ where: { id: record.id }, data: { usedAt: new Date() } }),
-      prisma.user.update({ where: { id: record.userId }, data: { emailVerifiedAt: new Date() } }),
+      prisma.emailVerificationToken.updateMany({ where: { userId: record.userId, usedAt: null }, data: { usedAt: now } }),
+      prisma.user.update({ where: { id: record.userId }, data: { emailVerifiedAt: now } }),
     ]);
 
     return { message: 'Email verified. You can now sign in.' };
+  }
+
+  /**
+   * Verifies the 6-digit OTP sent to the user's email and returns a signed-in session
+   * so the user can proceed directly to role selection.
+   */
+  static async verifyOtp(email: string, otp: string) {
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      throw new HttpError(400, 'Invalid or expired verification code.', 'INVALID_OTP');
+    }
+
+    const record = await prisma.emailVerificationToken.findUnique({
+      where: { tokenHash: otpHash(user.id, otp) },
+    });
+
+    if (!record || record.usedAt || record.expiresAt < new Date()) {
+      throw new HttpError(400, 'Invalid or expired verification code.', 'INVALID_OTP');
+    }
+
+    const now = new Date();
+    await prisma.$transaction([
+      prisma.emailVerificationToken.updateMany({ where: { userId: user.id, usedAt: null }, data: { usedAt: now } }),
+      prisma.user.update({ where: { id: user.id }, data: { emailVerifiedAt: user.emailVerifiedAt ?? now } }),
+    ]);
+
+    const session = await sessionFor(user.id);
+    return {
+      message: 'Email verified.',
+      ...session,
+    };
   }
 
   static async login(email: string, password: string) {
@@ -111,7 +167,8 @@ export class AuthService {
       throw new HttpError(401, 'Invalid email or password', 'INVALID_CREDENTIALS');
     }
     if (!user.emailVerifiedAt) {
-      throw new HttpError(403, 'Please verify your email before signing in.', 'EMAIL_NOT_VERIFIED');
+      await issueVerification(user.id, email).catch(() => undefined);
+      throw new HttpError(403, 'Please enter the 6-digit verification code sent to your email.', 'EMAIL_NOT_VERIFIED');
     }
 
     // No active role yet: the frontend shows the role picker next
