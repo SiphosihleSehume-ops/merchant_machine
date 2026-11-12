@@ -1,0 +1,8 @@
+node_modules
+artifacts
+cache
+dist
+types
+ignition/deployments/chain-31337
+.env
+deployments/*.local.json
