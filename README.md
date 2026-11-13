@@ -1,3 +1,4 @@
+>>>>>>> af711698bccc1c0a2afa3fdd97de41733bb3d0d3
 # Merchant & Payment Machine
 
 > A dual-role (Merchant + Customer) payment application and x402 resource server enabling instant digital rand (`ZARK`) and `USDC` payments with gasless EIP-3009 signatures, server-verified invoicing, an immutable double-entry ledger, and merchant-consented reversals.
@@ -152,60 +153,4 @@ The frontend runs on `http://localhost:3000`.
 
 ## License
 
-# Merchant & Payment Machine: front end
-
-Next.js (App Router) + TypeScript. Mobile-first merchant UI, dark theme with an orange accent.
-
-    npm install
-    npm run dev      # http://localhost:3000
-
-## Where things live
-- `app/globals.css`: all design tokens (colours, radii, spacing) at the top. Change `--accent` to re-theme.
-- `components/Logo.tsx`: placeholder brand mark. Replace its contents with the real logo.
-- `lib/data.ts`: placeholder data (merchant, suppliers, transactions...). Swap for API calls.
-- `lib/nav.ts`: home tile list, also reused by the Menu page.
-- `app/<route>/page.tsx`: one folder per screen.
-
-## Screens
-Home, Suppliers (sort / distance / favourites + search), Top ups, Transfers, History,
-Stock advance, Money transfer (+ per-country stub), Accounts, Orders, Profile, Devices,
-Inbox, Share code (QR), Request payment, Cart, Scan, Menu.
-
-
-## 🧪 Testnet setup (Ethereum Sepolia, own tokens)
-
-Three packages: `contracts/` (Hardhat 3, npm), `backend/` (Express, pnpm) and the Next.js app at the root (npm).
-
-**1. Deploy the test tokens** (ZARK, USDC mock, NGN; 6 decimals, EIP-3009, EIP-2612, public faucet)
-
-```bash
-cd contracts && npm install
-npm test                      # token unit tests
-npm run deploy:sepolia        # uses SEPOLIA_RPC_URL + PRIVATE_KEY from contracts/.env or ../.env
-```
-
-Addresses are written to `contracts/deployments/sepolia.json` and printed as `TOKEN_*_ADDRESS=` lines.
-
-**2. Backend:** copy `backend/env.example` to `backend/.env` and fill it in: database, JWT secret, SMTP, `SEPOLIA_RPC_URL`, the token addresses, and `FACILITATOR_PRIVATE_KEY`. That key is the relayer wallet that settles payments and pays the gas, so it needs Sepolia ETH.
-
-```bash
-cd backend && pnpm install
-pnpm prisma migrate deploy
-pnpm dev                      # http://localhost:4000
-```
-
-Without `SMTP_HOST` (outside production) the verification link is printed to the API console.
-
-**3. Frontend:** copy `env.example` to `.env.local`, then set `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_CHAIN_ID=11155111` and the `NEXT_PUBLIC_TOKEN_*_ADDRESS` values.
-
-```bash
-npm install && npm run dev     # http://localhost:3000
-```
-
-**Flow:** sign up → verify email → sign in → pick **Merchant** or **Customer**.
-- **Merchant:** Request a payment, which shows a single-use QR code for one invoice.
-- **Customer:** connect MetaMask (Sepolia), get test tokens from the faucet, then **Pay** (scan the QR, review the merchant and items, sign) or **Refund** (request a reversal; the 3% fee is non-refundable).
-
-Customers sign an EIP-3009 authorisation only. They need no ETH, because the backend's facilitator submits the transfer on-chain.
-
-**Local chain instead of Sepolia:** run `npx hardhat node` and `npx hardhat run scripts/deploy.ts --network localhost` in `contracts/`. Then set `CHAIN_ID=31337`, `SEPOLIA_RPC_URL=http://127.0.0.1:8545`, a Hardhat dev key as `FACILITATOR_PRIVATE_KEY`, and `NEXT_PUBLIC_CHAIN_ID=31337`. `backend/scripts/e2e-local.ts` runs the full flow (auth, wallet link, x402 payment, reversal) against that setup.
+This project is licensed under the MIT License.
