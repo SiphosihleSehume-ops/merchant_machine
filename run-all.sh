@@ -163,10 +163,32 @@ if [ "$MODE" != "sepolia" ]; then
     (cd "$ROOT_DIR/contracts" && ./node_modules/.bin/hardhat run scripts/deploy.ts --network localhost)
   fi
 
+  KYC_JSON="$ROOT_DIR/contracts/deployments/localhost-kyc.local.json"
+  PAYMENTS_JSON="$ROOT_DIR/contracts/deployments/localhost-payments.local.json"
+  KYC_ADDR=""
+  PAYMENTS_ADDR=""
+  if [ -f "$KYC_JSON" ]; then
+    KYC_ADDR=$(node -e "const fs=require('fs');console.log(JSON.parse(fs.readFileSync('$KYC_JSON','utf8')).kycVerification || '')")
+  fi
+  if [ -z "$KYC_ADDR" ] || ! has_contract_code "$RPC_URL" "$KYC_ADDR"; then
+    log "Deploying KYCVerification to local Hardhat chain..."
+    (cd "$ROOT_DIR/contracts" && ./node_modules/.bin/hardhat run scripts/deploy-kyc.ts --network localhost)
+    KYC_ADDR=$(node -e "const fs=require('fs');console.log(JSON.parse(fs.readFileSync('$KYC_JSON','utf8')).kycVerification || '')")
+  fi
+
+  if [ -f "$PAYMENTS_JSON" ]; then
+    PAYMENTS_ADDR=$(node -e "const fs=require('fs');console.log(JSON.parse(fs.readFileSync('$PAYMENTS_JSON','utf8')).merchantPayments || '')")
+  fi
+  if [ -z "$PAYMENTS_ADDR" ] || ! has_contract_code "$RPC_URL" "$PAYMENTS_ADDR"; then
+    log "Deploying MerchantPayments to local Hardhat chain..."
+    (cd "$ROOT_DIR/contracts" && ./node_modules/.bin/hardhat run scripts/deploy-payments.ts --network localhost)
+    PAYMENTS_ADDR=$(node -e "const fs=require('fs');console.log(JSON.parse(fs.readFileSync('$PAYMENTS_JSON','utf8')).merchantPayments || '')")
+  fi
+
   ZARK_ADDR=$(node -e "const fs=require('fs');console.log(JSON.parse(fs.readFileSync('$DEPLOY_JSON','utf8')).tokens.ZARK.address)")
   USDC_ADDR=$(node -e "const fs=require('fs');console.log(JSON.parse(fs.readFileSync('$DEPLOY_JSON','utf8')).tokens.USDC.address)")
   NGN_ADDR=$(node -e "const fs=require('fs');console.log(JSON.parse(fs.readFileSync('$DEPLOY_JSON','utf8')).tokens.NGN.address)")
-  log "Active contracts: ZARK=$ZARK_ADDR | USDC=$USDC_ADDR | NGN=$NGN_ADDR"
+  log "Active contracts: ZARK=$ZARK_ADDR | USDC=$USDC_ADDR | NGN=$NGN_ADDR | KYC=$KYC_ADDR | PAYMENTS=$PAYMENTS_ADDR"
 fi
 
 # ------------------------------------------------------------------------------

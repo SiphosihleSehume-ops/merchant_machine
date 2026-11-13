@@ -1,4 +1,3 @@
->>>>>>> af711698bccc1c0a2afa3fdd97de41733bb3d0d3
 # Merchant & Payment Machine
 
 > A dual-role (Merchant + Customer) payment application and x402 resource server enabling instant digital rand (`ZARK`) and `USDC` payments with gasless EIP-3009 signatures, server-verified invoicing, an immutable double-entry ledger, and merchant-consented reversals.

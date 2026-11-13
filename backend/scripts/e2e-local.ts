@@ -120,11 +120,16 @@ check('on-chain: customer -60 ZARK, merchant +60 ZARK', before.cust - after.cust
 const replay = await fetch(`${API}/x402/pay/${invoiceId}`, { headers: { accept: 'application/json', ...http402.encodePaymentSignatureHeader(payload) } });
 check('replay of paid invoice -> 409 (invoice PAID)', replay.status === 409, replay.status);
 
+const feePct = Number(process.env.PLATFORM_FEE_PERCENT ?? '2.5');
+const expFee = ((60 * feePct) / 100).toFixed(2);
+const expNet = (60 - Number(expFee)).toFixed(2);
+const expNetAtomic = BigInt(Math.round(Number(expNet) * 1_000_000));
+
 await sleep(300);
 const txs = await call('GET', '/transactions', undefined, cTok);
 const t = txs.json.data[0];
 check('customer history: SETTLED, ZARK, tx hash, linked', t?.status === 'SETTLED' && t.asset === 'ZARK' && t.txHash === settle.transaction, txs.json);
-check('history includes non-refundable service fee R1.80', t?.serviceFee === '1.80', t);
+check(`history includes non-refundable service fee R${expFee}`, t?.serviceFee === expFee, t);
 const invStatus = await call('GET', `/invoices/${invoiceId}`, undefined, mTok);
 check('merchant invoice lookup shows PAID + asset', invStatus.json?.data?.status === 'PAID' && invStatus.json.data.payment?.asset === 'ZARK', invStatus.json);
 const otherInv = await call('GET', `/invoices/${invoiceId}`, undefined, cTok);
@@ -136,7 +141,7 @@ check('merchant history sees the payment', mtxs.json.data[0]?.id === t?.id, mtxs
 const noAck = await call('POST', '/reversals', { transactionId: t.id }, cTok);
 check('reversal without fee acknowledgement -> 400', noAck.status === 400, noAck);
 const rev = await call('POST', '/reversals', { transactionId: t.id, reason: 'Wrong items', acknowledgeNonRefundableFee: true }, cTok);
-check('reversal requested: 58.20 back, 1.80 fee kept, PENDING_MERCHANT', rev.status === 201 && rev.json.data.amount === '58.20' && rev.json.data.reversalFee === '1.80' && rev.json.data.status === 'PENDING_MERCHANT', rev);
+check(`reversal requested: ${expNet} back, ${expFee} fee kept, PENDING_MERCHANT`, rev.status === 201 && rev.json.data.amount === expNet && rev.json.data.reversalFee === expFee && rev.json.data.status === 'PENDING_MERCHANT', rev);
 const dup = await call('POST', '/reversals', { transactionId: t.id, acknowledgeNonRefundableFee: true }, cTok);
 check('duplicate reversal -> 409', dup.status === 409, dup);
 const mRev = await call('GET', '/reversals', undefined, mTok);
@@ -150,13 +155,13 @@ const dupApprove = await call('PATCH', `/reversals/${rev.json.data.id}`, { actio
 check('idempotent: second approve -> 409', dupApprove.status === 409, dupApprove);
 
 const afterRefund = await bal(ZARK, customerAcct.address);
-check('on-chain refund: customer received +58.20 ZARK', afterRefund - after.cust === 58_200000n, { after: after.cust, afterRefund });
+check(`on-chain refund: customer received +${expNet} ZARK`, afterRefund - after.cust === expNetAtomic, { after: after.cust, afterRefund });
 
 const txsAfter = await call('GET', '/transactions', undefined, cTok);
 check('transaction display status is REVERSED', txsAfter.json.data[0]?.status === 'REVERSED', txsAfter.json.data[0]);
 
 const ledger = await call('GET', '/merchants/me/ledger', undefined, mTok);
-check('ledger net payable is 0.00 and platform fee is 1.80', ledger.status === 200 && ledger.json.data.balances.merchantPayable === '0.00' && ledger.json.data.balances.platformFees === '1.80', ledger.json);
+check(`ledger net payable is 0.00 and platform fee is ${expFee}`, ledger.status === 200 && ledger.json.data.balances.merchantPayable === '0.00' && ledger.json.data.balances.platformFees === expFee, ledger.json);
 
 const webhooks = await call('GET', '/merchants/me/webhooks', undefined, mTok);
 check('webhooks recorded for payment.settled, reversal.requested, reversal.completed', webhooks.status === 200 && webhooks.json.data.length === 3, webhooks.json);
@@ -165,6 +170,26 @@ const kycBefore = await call('GET', '/customers/me', undefined, cTok);
 check('customer starts at TIER_1_BASIC', kycBefore.status === 200 && kycBefore.json.data.tier === 'TIER_1_BASIC', kycBefore.json);
 const kycAfter = await call('POST', '/customers/me/kyc', { fullName: 'Test Buyer', countryCode: 'ZA', popiaConsent: true }, cTok);
 check('customer KYC upgrades to TIER_2_VERIFIED', kycAfter.status === 200 && kycAfter.json.data.tier === 'TIER_2_VERIFIED', kycAfter.json);
+
+// ---------- merchant shop, balance, accounts, devices, and directPay receipt ----------
+const shop = await call('GET', '/merchants/me/shop', undefined, mTok);
+check('merchant shop details returned', shop.status === 200 && shop.json.data.name === 'Kasi Corner Shop', shop.json);
+const mBal = await call('GET', '/merchants/me/balance', undefined, mTok);
+check('merchant live on-chain ZARK balance returned', mBal.status === 200 && typeof mBal.json.data.balance === 'string', mBal.json);
+const accts = await call('GET', '/merchants/me/accounts', undefined, mTok);
+check('merchant accounts list includes main shop', accts.status === 200 && Array.isArray(accts.json.data.accounts) && accts.json.data.accounts.length >= 1, accts.json);
+
+const devSerial = `POS-${RUN.toUpperCase()}`;
+const devLink = await call('POST', '/devices', { name: 'Counter Terminal 1', serial: devSerial }, mTok);
+check('merchant links POS device -> 201', devLink.status === 201 && devLink.json.data.serial === devSerial, devLink.json);
+const devList = await call('GET', '/devices', undefined, mTok);
+check('merchant lists linked POS devices', devList.status === 200 && devList.json.data.some((d: any) => d.serial === devSerial), devList.json);
+const devDel = await call('DELETE', `/devices/${devLink.json.data.id}`, undefined, mTok);
+check('merchant unlinks POS device -> 200', devDel.status === 200 && devDel.json.data.removed === true, devDel.json);
+
+const inv2 = await call('POST', '/invoices', { currency: 'ZAR', items: [{ name: 'Airtime', quantity: 1, unitPrice: 40 }] }, mTok);
+const dpReceipt = await call('GET', `/x402/invoice/${inv2.json.data.id}`);
+check('directPay receipt returns invoice + platformFee + ZARK pay details', dpReceipt.status === 200 && dpReceipt.json.data.total === '40.00' && dpReceipt.json.data.pay.symbol === 'ZARK', dpReceipt.json);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
