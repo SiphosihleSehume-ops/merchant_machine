@@ -6,6 +6,8 @@ import { prisma } from './lib/prisma.js'; // Note the .js extension for ESM
 import merchantRoutes from './routes/merchant.routes.js';
 import invoiceRoutes from './routes/invoice.routes.js';
 import x402Routes from './routes/x402.routes.js';
+import { kycRouter, adminKycRouter, emailReviewRouter } from './routes/kyc.routes.js';
+import deviceRoutes from './routes/device.routes.js';
 import authRoutes from './routes/auth.routes.js';
 import customerRoutes from './routes/customer.routes.js';
 import { reversalsRouter, transactionsRouter } from './routes/payments.routes.js';
@@ -18,8 +20,11 @@ const app = express();
 // ==========================================
 
 // Allow requests from your Next.js frontend (runs on localhost:3000)
+// Development: accept the app from localhost, 127.0.0.1 or a LAN IP (phones) so the
+// browser never blocks API calls ("Can't reach the server"). Production: CORS_ORIGIN only.
+const corsOrigins = process.env.CORS_ORIGIN?.split(',').map((o) => o.trim()).filter(Boolean);
 app.use(cors({
-  origin: process.env.CORS_ORIGIN?.split(',') ?? true,
+  origin: process.env.NODE_ENV === 'production' ? corsOrigins ?? false : true,
   // Browser x402 clients must be able to read the challenge and receipt headers
   exposedHeaders: ['PAYMENT-REQUIRED', 'PAYMENT-RESPONSE'],
 }));
@@ -69,6 +74,10 @@ app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/customers', customerRoutes);
 app.use('/api/v1/transactions', transactionsRouter);
 app.use('/api/v1/reversals', reversalsRouter);
+app.use('/api/v1/kyc', kycRouter);
+app.use('/api/v1/admin/kyc', adminKycRouter);
+app.use('/api/v1/kyc-review', emailReviewRouter);
+app.use('/api/v1/devices', deviceRoutes);
 app.use('/api/v1/merchants', merchantRoutes);
 app.use('/api/v1/invoices', invoiceRoutes); // <-- CLEANED UP (removed duplicate)
 app.use('/api/v1/x402', x402Routes);       // <-- ADDED X402 ROUTES

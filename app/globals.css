@@ -712,6 +712,10 @@ button.row:hover {
   background: var(--ok);
 }
 
+.txn[data-status="PENDING"]::after {
+  background: var(--accent);
+}
+
 .txn[data-ok="false"]::after {
   background: var(--bad);
 }
@@ -1632,4 +1636,41 @@ textarea.text-input {
 .check input {
   margin-top: 3px;
   accent-color: var(--accent);
+}
+
+/* ---------- Balance show/hide ---------- */
+.balance-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.balance-wrap .balance,
+.balance-wrap .topbar-balance {
+  transition: opacity 0.2s;
+}
+
+.balance-wrap[data-hidden="true"] .balance,
+.balance-wrap[data-hidden="true"] .topbar-balance {
+  opacity: 0.35;
+}
+
+.eye-btn {
+  display: grid;
+  place-items: center;
+  padding: 6px;
+  background: none;
+  border: 0;
+  border-radius: 999px;
+  color: var(--muted);
+  transition: color 0.15s, background 0.15s;
+}
+
+.eye-btn:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.balance-wrap.topbar .eye-btn {
+  padding: 4px;
 }

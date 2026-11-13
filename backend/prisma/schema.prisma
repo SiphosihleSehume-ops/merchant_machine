@@ -20,6 +20,14 @@ enum KycStatus {
   UNVERIFIED
   PENDING
   VERIFIED
+  REJECTED
+}
+
+enum KycApplicationStatus {
+  PENDING // waiting for a verifier
+  APPROVING // verifier approved, on-chain transaction in flight
+  APPROVED // recorded on the KYCVerification contract
+  REJECTED
 }
 
 enum InvoiceStatus {
@@ -77,6 +85,7 @@ model User {
   merchant           Merchant?
   customer           Customer?
   verificationTokens EmailVerificationToken[]
+  kycApplications    KycApplication[]
 }
 
 // Single-use email verification link (only the SHA-256 hash is stored)
@@ -99,6 +108,7 @@ model Merchant {
   user   User   @relation(fields: [userId], references: [id])
 
   name         String
+  category     String? // Shop category (see SHOP_CATEGORIES in lib/validators.ts)
   fiatWallet   String? // e.g., Bank Account / IBAN
   cryptoWallet String? // e.g., EVM Address (0x...)
 
@@ -114,6 +124,8 @@ model Merchant {
   invoices      Invoice[]
   ledgerEntries LedgerEntry[]
   reversals     Reversal[]
+  devices       Device[]
+  branches      BusinessAccount[]
 }
 
 // Customer Entity (PDF Section 4)
@@ -145,6 +157,10 @@ model Invoice {
 
   expiresAt DateTime
   createdAt DateTime @default(now())
+
+  // Fee terms snapshotted at creation (null = legacy invoice: merchant.feePercentage, ledger only)
+  platformFeeBps   Int? // 250 = 2.5%, deducted from the merchant's side
+  paymentsContract String? // MerchantPayments address: payment must go through it (fee collected on-chain)
 
   items       InvoiceItem[]
   transaction Transaction?
@@ -278,4 +294,77 @@ model WebhookEvent {
 
   createdAt   DateTime  @default(now())
   deliveredAt DateTime?
+}
+
+// KYC application (My Address). Identity documents are stored ENCRYPTED off-chain
+// (backend/uploads/kyc); only wallet + verified flag + timestamp go on-chain.
+model KycApplication {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  role          Role // which profile applied (MERCHANT | CUSTOMER)
+  walletAddress String // wallet that gets recorded on-chain when approved
+
+  // Residential address
+  streetAddress String
+  suburb        String?
+  city          String
+  province      String
+  postalCode    String
+  country       String  @default("South Africa")
+
+  // Encrypted document files (AES-256-GCM); paths are relative to the upload dir
+  idDocumentFile     String
+  idDocumentMime     String
+  proofOfAddressFile String
+  proofOfAddressMime String
+
+  popiaConsentAt DateTime
+  status         KycApplicationStatus @default(PENDING)
+
+  reviewedBy      String? // verifier email
+  reviewedAt      DateTime?
+  rejectionReason String?
+  chainTxHash     String? // KYCVerification.verify() transaction
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+}
+
+// Card machines / POS devices linked to a merchant (My devices). Only registered,
+// signed-in accounts can link them; transfers start from a linked device.
+model Device {
+  id         String   @id @default(uuid())
+  merchantId String
+  merchant   Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  name   String
+  serial String @unique // one device can only be linked to one merchant
+
+  linkedAt DateTime @default(now())
+
+  @@index([merchantId])
+}
+
+// Additional business accounts (branches) of a merchant (Accounts page). They reuse the
+// owner's approved KYC; each has its own wallet, recorded on the KYCVerification contract.
+model BusinessAccount {
+  id         String   @id @default(uuid())
+  merchantId String
+  merchant   Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  name          String
+  category      String
+  walletAddress String @unique // checksummed; proven by MetaMask signature
+
+  chainTxHash String? // KYCVerification.verify(wallet) for this branch
+  verifiedAt  DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([merchantId])
 }

@@ -88,6 +88,7 @@ export interface PaymentOptionQuote {
   symbol: TokenSymbol;
   asset: `0x${string}`;
   amountAtomic: string;
+  decimals: number;
   zarPerToken: string;
   eip712: { name: string; version: string };
 }
@@ -101,6 +102,7 @@ export interface InvoiceQuote {
   invoiceId: string;
   merchantId: string;
   merchantName: string;
+  merchantCategory: string | null;
   payTo: string;
   currency: string;
   subtotal: string;

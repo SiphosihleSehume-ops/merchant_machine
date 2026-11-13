@@ -1,7 +1,8 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { api, SESSION_KEY } from "./api";
+import { api, DEMO_ROLE_KEY, SESSION_KEY } from "./api";
+import { AUTH_DISABLED } from "./config";
 
 export type Role = "MERCHANT" | "CUSTOMER";
 
@@ -9,6 +10,9 @@ export type SessionUser = {
   id: string;
   email: string;
   role: Role | null;
+  kycStatus?: "UNVERIFIED" | "PENDING" | "VERIFIED" | "REJECTED";
+  /** KYC verifier (backend ADMIN_EMAILS) */
+  isAdmin?: boolean;
   hasMerchantProfile: boolean;
   hasCustomerProfile: boolean;
   merchant: { id: string; name: string; cryptoWallet: string | null; feePercentage: number } | null;
@@ -29,6 +33,47 @@ type AuthContextValue = {
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+// ------------------------------------------------------------------
+// TEMPORARY TEST MODE (NEXT_PUBLIC_AUTH_DISABLED=true): no sign-in. The session is the
+// backend's demo user; only the active role is remembered (localStorage mm.demoRole).
+// ------------------------------------------------------------------
+const DEMO_NO_ROLE: Session = {
+  token: "demo",
+  user: {
+    id: "demo",
+    email: "demo@merchantmachine.test",
+    role: null,
+    hasMerchantProfile: true, // demo user already owns both profiles: skip setup forms
+    hasCustomerProfile: true,
+    merchant: null,
+    customer: null,
+  },
+};
+
+function readDemoRole(): Role | null {
+  try {
+    const r = localStorage.getItem(DEMO_ROLE_KEY);
+    return r === "MERCHANT" || r === "CUSTOMER" ? r : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeDemoRole(role: Role | null) {
+  try {
+    if (role) localStorage.setItem(DEMO_ROLE_KEY, role);
+    else localStorage.removeItem(DEMO_ROLE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+async function loadDemoSession(role: Role | null): Promise<Session> {
+  if (!role) return DEMO_NO_ROLE;
+  const user = await api<SessionUser>("/auth/me");
+  return { token: "demo", user: { ...user, role } };
+}
 
 function tokenExpired(token: string) {
   try {
@@ -54,6 +99,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (AUTH_DISABLED) {
+      loadDemoSession(readDemoRole())
+        .catch(() => DEMO_NO_ROLE)
+        .then((s) => {
+          setSession(s);
+          setReady(true);
+        });
+      return;
+    }
     try {
       const raw = localStorage.getItem(SESSION_KEY);
       const parsed = raw ? (JSON.parse(raw) as Session) : null;
@@ -88,6 +142,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const selectRole = useCallback(
     async (input: { role: Role; businessName?: string; cryptoWallet?: string }) => {
+      if (AUTH_DISABLED) {
+        writeDemoRole(input.role);
+        const demo = await loadDemoSession(input.role);
+        setSession(demo);
+        return demo;
+      }
       const next = await api<Session>("/auth/select-role", { body: input });
       save(next);
       return next;
@@ -97,11 +157,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refresh = useCallback(async () => {
     if (!session) return;
+    if (AUTH_DISABLED) {
+      setSession(await loadDemoSession(readDemoRole()));
+      return;
+    }
     const user = await api<SessionUser>("/auth/me");
     save({ token: session.token, user });
   }, [session, save]);
 
-  const logout = useCallback(() => save(null), [save]);
+  // Test mode: "sign out" just returns to the role picker
+  const logout = useCallback(() => {
+    if (AUTH_DISABLED) {
+      writeDemoRole(null);
+      setSession(DEMO_NO_ROLE);
+      return;
+    }
+    save(null);
+  }, [save]);
 
   const value = useMemo(
     () => ({ ready, session, login, verifyOtp, selectRole, refresh, logout }),

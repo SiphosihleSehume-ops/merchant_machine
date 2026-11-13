@@ -7,6 +7,8 @@ import {
   custom,
   erc20Abi,
   formatUnits,
+  maxUint256,
+  parseUnits,
   type EIP1193Provider,
 } from "viem";
 import { hardhat, sepolia } from "viem/chains";
@@ -77,6 +79,20 @@ async function walletClient(address: `0x${string}`) {
 
 export type Balance = { symbol: string; label: string; amount: string; raw: bigint; address?: `0x${string}` };
 
+/** Token decimals read on-chain once (handles 6- and 18-decimal tokens); config value as fallback. */
+const decimalsCache = new Map<string, number>();
+async function decimalsOf(token: `0x${string}`, fallback: number): Promise<number> {
+  const key = token.toLowerCase();
+  if (!decimalsCache.has(key)) {
+    const d = await publicClient()
+      .readContract({ address: token, abi: erc20Abi, functionName: "decimals" })
+      .then(Number)
+      .catch(() => fallback);
+    decimalsCache.set(key, d);
+  }
+  return decimalsCache.get(key)!;
+}
+
 export async function getBalances(address: `0x${string}`): Promise<Balance[]> {
   const client = publicClient();
   const eth = await client.getBalance({ address });
@@ -85,7 +101,8 @@ export async function getBalances(address: `0x${string}`): Promise<Balance[]> {
       const raw = await client
         .readContract({ address: t.address!, abi: erc20Abi, functionName: "balanceOf", args: [address] })
         .catch(() => 0n);
-      return { symbol: t.symbol, label: t.label, raw, amount: formatUnits(raw, t.decimals), address: t.address };
+      const decimals = await decimalsOf(t.address!, t.decimals);
+      return { symbol: t.symbol, label: t.label, raw, amount: formatUnits(raw, decimals), address: t.address };
     }),
   );
   return [...tokens, { symbol: "ETH", label: "Gas", raw: eth, amount: formatUnits(eth, 18) }];
@@ -117,6 +134,42 @@ export async function signWalletLink(userId: string, address: `0x${string}`) {
   const issuedAt = new Date().toISOString();
   const wc = await walletClient(address);
   const signature = await wc.signMessage({ message: walletLinkMessage(userId, address, issuedAt) });
+  return { address, issuedAt, signature };
+}
+
+/** MUST match backend/src/services/merchant.service.ts shopWalletMessage(). */
+export function shopWalletMessage(userId: string, address: string, issuedAt: string) {
+  return [
+    "Merchant Machine: receive my shop payments at this wallet.",
+    `Account: ${userId}`,
+    `Wallet: ${address.toLowerCase()}`,
+    `Issued at: ${issuedAt}`,
+  ].join("\n");
+}
+
+/** Merchant proves control of the payout wallet (signature only, no gas). */
+/** MUST match backend/src/services/account.service.ts branchWalletMessage(). */
+export function branchWalletMessage(userId: string, address: string, issuedAt: string) {
+  return [
+    "Merchant Machine: add this wallet as a business account.",
+    `Account: ${userId}`,
+    `Wallet: ${address.toLowerCase()}`,
+    `Issued at: ${issuedAt}`,
+  ].join("\n");
+}
+
+/** Proves control of a new business-account wallet (signature only, no gas). */
+export async function signBranchWallet(userId: string, address: `0x${string}`) {
+  const issuedAt = new Date().toISOString();
+  const wc = await walletClient(address);
+  const signature = await wc.signMessage({ message: branchWalletMessage(userId, address, issuedAt) });
+  return { address, issuedAt, signature };
+}
+
+export async function signShopWallet(userId: string, address: `0x${string}`) {
+  const issuedAt = new Date().toISOString();
+  const wc = await walletClient(address);
+  const signature = await wc.signMessage({ message: shopWalletMessage(userId, address, issuedAt) });
   return { address, issuedAt, signature };
 }
 
@@ -180,6 +233,93 @@ export async function payInvoice(
     throw new WalletError(settlement.errorMessage || settlement.errorReason || "Settlement failed");
   }
   return { settlement, receipt: body?.data };
+}
+
+/**
+ * Sends an ERC-20 token from the connected MetaMask account (the sender pays gas in ETH).
+ * Returns once the transaction is mined.
+ */
+export async function sendToken(from: `0x${string}`, symbol: TokenSymbol, to: `0x${string}`, amount: string) {
+  const token = TOKENS.find((t) => t.symbol === symbol);
+  if (!token?.address) throw new WalletError(`${symbol} address is not configured`);
+  const value = parseUnits(amount, await decimalsOf(token.address, token.decimals));
+  if (value <= 0n) throw new WalletError("Enter an amount greater than 0");
+  // MetaMask can only send from the account currently selected in it
+  const selected = await currentAccount();
+  if (selected?.toLowerCase() !== from.toLowerCase()) {
+    throw new WalletError(`Switch MetaMask to the sending wallet ${shortAddress(from)} and try again.`);
+  }
+  const wc = await walletClient(from);
+  const hash = await wc.writeContract({ address: token.address, abi: erc20Abi, functionName: "transfer", args: [to, value] });
+  const receipt = await publicClient().waitForTransactionReceipt({ hash });
+  if (receipt.status !== "success") throw new WalletError("Transfer failed on-chain");
+  return hash;
+}
+
+/**
+ * Sends an exact raw token amount (atomic units, as quoted by the server) from the
+ * connected MetaMask account and waits until it is mined. Used for invoice payments so the
+ * customer pays exactly the invoice total.
+ */
+export async function sendTokenExact(from: `0x${string}`, token: `0x${string}`, to: `0x${string}`, rawAmount: bigint) {
+  if (rawAmount <= 0n) throw new WalletError("Nothing to pay");
+  const selected = await currentAccount();
+  if (selected?.toLowerCase() !== from.toLowerCase()) {
+    throw new WalletError(`Switch MetaMask to ${shortAddress(from)} and try again.`);
+  }
+  const wc = await walletClient(from);
+  const hash = await wc.writeContract({ address: token, abi: erc20Abi, functionName: "transfer", args: [to, rawAmount] });
+  const receipt = await publicClient().waitForTransactionReceipt({ hash });
+  if (receipt.status !== "success") throw new WalletError("Payment failed on-chain");
+  return hash;
+}
+
+const paymentsAbi = [
+  {
+    type: "function",
+    name: "pay",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "merchant", type: "address" },
+      { name: "amount", type: "uint256" },
+      { name: "invoiceRef", type: "bytes32" },
+    ],
+    outputs: [],
+  },
+] as const;
+
+/**
+ * Pays an invoice through the MerchantPayments contract: one transaction that sends the
+ * merchant their share and the platform its fee. The first time, MetaMask also asks to let
+ * the contract use ZARK (one-time approval; the contract can only pull from the payer).
+ */
+export async function payThroughContract(
+  from: `0x${string}`,
+  p: { contract: `0x${string}`; token: `0x${string}`; merchant: `0x${string}`; amount: bigint; invoiceRef: `0x${string}` },
+  onStep?: (step: "approve" | "pay") => void,
+) {
+  if (p.amount <= 0n) throw new WalletError("Nothing to pay");
+  const selected = await currentAccount();
+  if (selected?.toLowerCase() !== from.toLowerCase()) {
+    throw new WalletError(`Switch MetaMask to ${shortAddress(from)} and try again.`);
+  }
+  const wc = await walletClient(from);
+  const pc = publicClient();
+
+  const allowance = await pc.readContract({ address: p.token, abi: erc20Abi, functionName: "allowance", args: [from, p.contract] });
+  if (allowance < p.amount) {
+    onStep?.("approve");
+    const approveHash = await wc.writeContract({ address: p.token, abi: erc20Abi, functionName: "approve", args: [p.contract, maxUint256] });
+    const r = await pc.waitForTransactionReceipt({ hash: approveHash });
+    if (r.status !== "success") throw new WalletError("Approval failed on-chain");
+  }
+
+  onStep?.("pay");
+  const hash = await wc.writeContract({ address: p.contract, abi: paymentsAbi, functionName: "pay", args: [p.token, p.merchant, p.amount, p.invoiceRef] });
+  const receipt = await pc.waitForTransactionReceipt({ hash });
+  if (receipt.status !== "success") throw new WalletError("Payment failed on-chain");
+  return hash;
 }
 
 export const shortAddress = (a?: string | null) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "");

@@ -163,10 +163,32 @@ if [ "$MODE" != "sepolia" ]; then
     (cd "$ROOT_DIR/contracts" && ./node_modules/.bin/hardhat run scripts/deploy.ts --network localhost)
   fi
 
+  KYC_JSON="$ROOT_DIR/contracts/deployments/localhost-kyc.local.json"
+  PAYMENTS_JSON="$ROOT_DIR/contracts/deployments/localhost-payments.local.json"
+  KYC_ADDR=""
+  PAYMENTS_ADDR=""
+  if [ -f "$KYC_JSON" ]; then
+    KYC_ADDR=$(node -e "const fs=require('fs');console.log(JSON.parse(fs.readFileSync('$KYC_JSON','utf8')).kycVerification || '')")
+  fi
+  if [ -z "$KYC_ADDR" ] || ! has_contract_code "$RPC_URL" "$KYC_ADDR"; then
+    log "Deploying KYCVerification to local Hardhat chain..."
+    (cd "$ROOT_DIR/contracts" && ./node_modules/.bin/hardhat run scripts/deploy-kyc.ts --network localhost)
+    KYC_ADDR=$(node -e "const fs=require('fs');console.log(JSON.parse(fs.readFileSync('$KYC_JSON','utf8')).kycVerification || '')")
+  fi
+
+  if [ -f "$PAYMENTS_JSON" ]; then
+    PAYMENTS_ADDR=$(node -e "const fs=require('fs');console.log(JSON.parse(fs.readFileSync('$PAYMENTS_JSON','utf8')).merchantPayments || '')")
+  fi
+  if [ -z "$PAYMENTS_ADDR" ] || ! has_contract_code "$RPC_URL" "$PAYMENTS_ADDR"; then
+    log "Deploying MerchantPayments to local Hardhat chain..."
+    (cd "$ROOT_DIR/contracts" && ./node_modules/.bin/hardhat run scripts/deploy-payments.ts --network localhost)
+    PAYMENTS_ADDR=$(node -e "const fs=require('fs');console.log(JSON.parse(fs.readFileSync('$PAYMENTS_JSON','utf8')).merchantPayments || '')")
+  fi
+
   ZARK_ADDR=$(node -e "const fs=require('fs');console.log(JSON.parse(fs.readFileSync('$DEPLOY_JSON','utf8')).tokens.ZARK.address)")
   USDC_ADDR=$(node -e "const fs=require('fs');console.log(JSON.parse(fs.readFileSync('$DEPLOY_JSON','utf8')).tokens.USDC.address)")
   NGN_ADDR=$(node -e "const fs=require('fs');console.log(JSON.parse(fs.readFileSync('$DEPLOY_JSON','utf8')).tokens.NGN.address)")
-  log "Active contracts: ZARK=$ZARK_ADDR | USDC=$USDC_ADDR | NGN=$NGN_ADDR"
+  log "Active contracts: ZARK=$ZARK_ADDR | USDC=$USDC_ADDR | NGN=$NGN_ADDR | KYC=$KYC_ADDR | PAYMENTS=$PAYMENTS_ADDR"
 fi
 
 # ------------------------------------------------------------------------------
@@ -260,6 +282,10 @@ FACILITATOR_PRIVATE_KEY="$DEFAULT_HARDHAT_PK"
 TOKEN_ZARK_ADDRESS="$ZARK_ADDR"
 TOKEN_USDC_ADDRESS="$USDC_ADDR"
 TOKEN_NGN_ADDRESS="$NGN_ADDR"
+KYC_CONTRACT_ADDRESS="$KYC_ADDR"
+KYC_VERIFIER_PRIVATE_KEY="$DEFAULT_HARDHAT_PK"
+PAYMENTS_CONTRACT_ADDRESS="$PAYMENTS_ADDR"
+PLATFORM_FEE_PERCENT=2.5
 
 # ---- Demo settings ----
 ZAR_PER_USD=18.50
@@ -276,6 +302,8 @@ EOF
         TOKEN_ZARK_ADDRESS: '\"$ZARK_ADDR\"',
         TOKEN_USDC_ADDRESS: '\"$USDC_ADDR\"',
         TOKEN_NGN_ADDRESS: '\"$NGN_ADDR\"',
+        KYC_CONTRACT_ADDRESS: '\"$KYC_ADDR\"',
+        PAYMENTS_CONTRACT_ADDRESS: '\"$PAYMENTS_ADDR\"',
       };
       for (const [k, v] of Object.entries(updates)) {
         const re = new RegExp('^' + k + '=.*$', 'm');
@@ -322,6 +350,9 @@ log "Starting Backend API on http://localhost:$API_PORT (log: $BACKEND_LOG)..."
     TOKEN_ZARK_ADDRESS="$ZARK_ADDR" \
     TOKEN_USDC_ADDRESS="$USDC_ADDR" \
     TOKEN_NGN_ADDRESS="$NGN_ADDR" \
+    KYC_CONTRACT_ADDRESS="$KYC_ADDR" \
+    KYC_VERIFIER_PRIVATE_KEY="$DEFAULT_HARDHAT_PK" \
+    PAYMENTS_CONTRACT_ADDRESS="$PAYMENTS_ADDR" \
     E2E_LOCAL_MAIL="1" \
     ./node_modules/.bin/tsx src/server.ts >"$BACKEND_LOG" 2>&1
   elif [ "$MODE" != "sepolia" ]; then
@@ -333,6 +364,9 @@ log "Starting Backend API on http://localhost:$API_PORT (log: $BACKEND_LOG)..."
     TOKEN_ZARK_ADDRESS="$ZARK_ADDR" \
     TOKEN_USDC_ADDRESS="$USDC_ADDR" \
     TOKEN_NGN_ADDRESS="$NGN_ADDR" \
+    KYC_CONTRACT_ADDRESS="$KYC_ADDR" \
+    KYC_VERIFIER_PRIVATE_KEY="$DEFAULT_HARDHAT_PK" \
+    PAYMENTS_CONTRACT_ADDRESS="$PAYMENTS_ADDR" \
     ./node_modules/.bin/tsx src/server.ts >"$BACKEND_LOG" 2>&1
   else
     PORT="$API_PORT" ./node_modules/.bin/tsx src/server.ts >"$BACKEND_LOG" 2>&1

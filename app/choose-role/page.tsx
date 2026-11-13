@@ -6,6 +6,7 @@ import { ChevronRight, Store, Wallet } from "lucide-react";
 import Logo from "@/components/Logo";
 import { homeFor, useAuth, type Role } from "@/lib/auth";
 import { connectWallet, hasMetaMask } from "@/lib/wallet";
+import { AUTH_DISABLED } from "@/lib/config";
 
 export default function ChooseRole() {
   const router = useRouter();
@@ -113,10 +114,16 @@ export default function ChooseRole() {
 
       {error && <div className="alert bad" role="alert">{error}</div>}
 
-      <div className="signed-in">
-        <span>Signed in as {user.email}</span>
-        <button className="link-btn" onClick={logout}>Sign out</button>
-      </div>
+      {AUTH_DISABLED ? (
+        <div className="alert warn">
+          <strong>Test mode:</strong> sign-in is turned off. You are using a shared demo account.
+        </div>
+      ) : (
+        <div className="signed-in">
+          <span>Signed in as {user.email}</span>
+          <button className="link-btn" onClick={logout}>Sign out</button>
+        </div>
+      )}
     </main>
   );
 }

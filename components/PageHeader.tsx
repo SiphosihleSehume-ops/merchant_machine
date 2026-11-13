@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ShoppingCart } from "lucide-react";
 import Logo from "./Logo";
-import { formatRand, merchant } from "@/lib/data";
+import { merchant } from "@/lib/data";
+import Balance from "./Balance";
+import { useMerchantBalance } from "@/lib/useMerchantBalance";
 
 export function CartButton() {
   return (
@@ -27,6 +29,7 @@ export default function PageHeader({
   hideBalance?: boolean;
 }) {
   const router = useRouter();
+  const { amount: balance } = useMerchantBalance(!hideBalance);
   return (
     <>
       <header className="topbar">
@@ -35,7 +38,7 @@ export default function PageHeader({
         </button>
         <div className="topbar-center">
           <Logo />
-          {!hideBalance && <span className="topbar-balance">{formatRand(merchant.balance)}</span>}
+          {!hideBalance && <Balance amount={balance} variant="topbar" />}
         </div>
         <CartButton />
       </header>
