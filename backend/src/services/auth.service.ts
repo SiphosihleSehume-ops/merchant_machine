@@ -1,9 +1,10 @@
 import crypto from 'node:crypto';
 import bcrypt from 'bcrypt';
 import { prisma } from '../lib/prisma.js';
-import { sendVerificationEmail } from '../lib/mailer.js';
+import { APP_URL, sendVerificationEmail } from '../lib/mailer.js';
 import { EVM_ADDRESS_RE, HttpError } from '../lib/x402.js';
 import { ActiveRole, signToken } from '../middleware/auth.middleware.js';
+import { isAdminEmail } from '../lib/admin.js';
 
 const VERIFY_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const VERIFY_OTP_TTL_MS = 15 * 60 * 1000;
@@ -18,11 +19,16 @@ const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', 10);
 const sha256 = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
 const otpHash = (userId: string, otp: string) => sha256(`otp:${userId}:${otp}`);
 
-async function issueVerification(userId: string, email: string): Promise<void> {
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const DEV_MAIL_NOTICE =
+  "We couldn't send the email (check SMTP settings). Development mode: your 6-digit code is printed in the backend terminal.";
+
+/** Returns false when the email could not be delivered (development fallback). */
+async function issueVerification(userId: string, email: string): Promise<boolean> {
   const recent = await prisma.emailVerificationToken.findFirst({
     where: { userId, usedAt: null, createdAt: { gt: new Date(Date.now() - RESEND_COOLDOWN_MS) } },
   });
-  if (recent) return; // throttle rapid resends
+  if (recent) return true; // throttle rapid resends (previous code still valid)
 
   // Invalidate any previous unused tokens for this user before issuing a fresh OTP + link
   await prisma.emailVerificationToken.updateMany({
@@ -49,7 +55,20 @@ async function issueVerification(userId: string, email: string): Promise<void> {
     ],
   });
 
-  await sendVerificationEmail(email, token, otp);
+  try {
+    await sendVerificationEmail(email, token, otp);
+    return true;
+  } catch (error: any) {
+    console.error(`[mail] could not send verification email to ${email}: ${error?.code ?? ''} ${error?.message ?? error}`);
+    if (IS_PRODUCTION) {
+      throw new HttpError(502, "We couldn't send the verification email. Please try again in a moment.", 'EMAIL_SEND_FAILED');
+    }
+    // Development fallback: the account and code stay valid, so verification can continue
+    console.warn(
+      `\n[mail] DEV FALLBACK for ${email}\n  Verification code: ${otp}\n  Link: ${APP_URL}/verify-email?token=${encodeURIComponent(token)}\n`,
+    );
+    return false;
+  }
 }
 
 async function sessionFor(userId: string, role?: ActiveRole) {
@@ -73,6 +92,7 @@ async function sessionFor(userId: string, role?: ActiveRole) {
       email: user.email,
       role: role ?? null,
       kycStatus: user.kycStatus,
+      isAdmin: isAdminEmail(user.email),
       hasMerchantProfile: !!user.merchant,
       hasCustomerProfile: !!user.customer,
       merchant: user.merchant
@@ -90,23 +110,25 @@ export class AuthService {
     if (existing) {
       // Unverified: resend a fresh OTP. Verified: say nothing (no enumeration).
       if (!existing.emailVerifiedAt) {
-        await issueVerification(existing.id, email);
+        const delivered = await issueVerification(existing.id, email);
+        return { message: delivered ? GENERIC_SENT : DEV_MAIL_NOTICE, emailDelivered: delivered };
       }
-      return { message: GENERIC_SENT };
+      return { message: GENERIC_SENT, emailDelivered: true };
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
     const user = await prisma.user.create({ data: { email, passwordHash } });
-    await issueVerification(user.id, email);
-    return { message: GENERIC_SENT };
+    const delivered = await issueVerification(user.id, email);
+    return { message: delivered ? GENERIC_SENT : DEV_MAIL_NOTICE, emailDelivered: delivered };
   }
 
   static async resendVerification(email: string) {
     const user = await prisma.user.findUnique({ where: { email } });
     if (user && !user.emailVerifiedAt) {
-      await issueVerification(user.id, email);
+      const delivered = await issueVerification(user.id, email);
+      return { message: delivered ? GENERIC_SENT : DEV_MAIL_NOTICE, emailDelivered: delivered };
     }
-    return { message: GENERIC_SENT };
+    return { message: GENERIC_SENT, emailDelivered: true };
   }
 
   static async verifyEmail(token: string) {

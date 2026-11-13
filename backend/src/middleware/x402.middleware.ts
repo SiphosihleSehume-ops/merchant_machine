@@ -98,7 +98,7 @@ export const x402InvoicePayment = paymentMiddleware(
             error: 'Payment Required',
             invoice: {
               id: q.invoiceId,
-              merchant: { name: q.merchantName, wallet: q.payTo },
+              merchant: { name: q.merchantName, category: q.merchantCategory, wallet: q.payTo },
               items: q.items,
               subtotal: q.subtotal,
               serviceFee: q.serviceFee,

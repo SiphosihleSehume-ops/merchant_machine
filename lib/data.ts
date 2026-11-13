@@ -17,6 +17,15 @@ export const formatRand = (n: number) =>
     .toFixed(2)
     .replace(/\B(?=(\d{3})+(?!\d))/g, " ");
 
+/** Account balances are held in ZARK (1 ZARK = R1). */
+export const ACCOUNT_CURRENCY = "ZARK";
+
+export const formatZark = (n: number) =>
+  `${ACCOUNT_CURRENCY} ` +
+  n
+    .toFixed(2)
+    .replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+
 export type Supplier = { id: string; name: string; km: number };
 
 export const suppliers: Supplier[] = [

@@ -122,6 +122,7 @@ export class X402Service {
       invoiceId: invoice.id,
       merchantId: invoice.merchantId,
       merchantName: invoice.merchant.name,
+      merchantCategory: invoice.merchant.category,
       payTo: wallet,
       currency: invoice.currency,
       subtotal: invoice.subtotal.toFixed(2),

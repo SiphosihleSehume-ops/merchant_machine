@@ -101,6 +101,7 @@ export interface InvoiceQuote {
   invoiceId: string;
   merchantId: string;
   merchantName: string;
+  merchantCategory: string | null;
   payTo: string;
   currency: string;
   subtotal: string;

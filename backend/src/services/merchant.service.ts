@@ -2,8 +2,66 @@ import { prisma } from '../lib/prisma.js';
 import { Prisma } from '@prisma/client';
 import bcrypt from 'bcrypt';
 import { signToken } from '../middleware/auth.middleware.js';
+import { getAddress, verifyMessage } from 'viem';
+import { HttpError } from '../lib/x402.js';
+
+const WALLET_PROOF_WINDOW_MS = 10 * 60 * 1000;
+
+/**
+ * Message the merchant signs in MetaMask to prove they control the payout wallet.
+ * MUST match frontend lib/wallet.ts shopWalletMessage().
+ */
+export function shopWalletMessage(userId: string, address: string, issuedAt: string) {
+  return [
+    'Merchant Machine: receive my shop payments at this wallet.',
+    `Account: ${userId}`,
+    `Wallet: ${address.toLowerCase()}`,
+    `Issued at: ${issuedAt}`,
+  ].join('\n');
+}
+
+function presentShop(m: { id: string; name: string; category: string | null; cryptoWallet: string | null; feePercentage: number }) {
+  return { id: m.id, name: m.name, category: m.category, cryptoWallet: m.cryptoWallet, feePercentage: m.feePercentage };
+}
 
 export class MerchantService {
+  static async getShop(merchantId: string) {
+    return presentShop(await prisma.merchant.findUniqueOrThrow({ where: { id: merchantId } }));
+  }
+
+  /**
+   * Updates shop name/category and, when provided, the payout wallet. The wallet is only
+   * accepted with a fresh signature from that wallet, so payments can't be routed to an
+   * address the merchant doesn't control. Pending invoices pick up the new wallet, because
+   * the x402 challenge reads it from the database on every scan.
+   */
+  static async updateShop(
+    userId: string,
+    merchantId: string,
+    input: { name: string; category: string; wallet?: { address: string; issuedAt: string; signature: string } },
+  ) {
+    let cryptoWallet: string | undefined;
+    if (input.wallet) {
+      const { address, issuedAt, signature } = input.wallet;
+      if (Math.abs(Date.now() - new Date(issuedAt).getTime()) > WALLET_PROOF_WINDOW_MS) {
+        throw new HttpError(400, 'Wallet signature expired, please connect again', 'SIGNATURE_EXPIRED');
+      }
+      const valid = await verifyMessage({
+        address: address as `0x${string}`,
+        message: shopWalletMessage(userId, address, issuedAt),
+        signature: signature as `0x${string}`,
+      }).catch(() => false);
+      if (!valid) throw new HttpError(400, 'Signature does not match this wallet', 'INVALID_SIGNATURE');
+      cryptoWallet = getAddress(address); // checksummed
+    }
+
+    const merchant = await prisma.merchant.update({
+      where: { id: merchantId },
+      data: { name: input.name, category: input.category, ...(cryptoWallet ? { cryptoWallet } : {}) },
+    });
+    return presentShop(merchant);
+  }
+
   static async registerMerchant(data: any) {
     const { email, password, name, fiatWallet, cryptoWallet } = data;
     const normalizedEmail = String(email).trim().toLowerCase();

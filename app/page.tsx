@@ -5,7 +5,8 @@ import { ChevronRight } from "lucide-react";
 import Logo from "@/components/Logo";
 import BottomNav from "@/components/BottomNav";
 import { CartButton } from "@/components/PageHeader";
-import { formatRand, merchant } from "@/lib/data";
+import { merchant } from "@/lib/data";
+import Balance from "@/components/Balance";
 import { tiles } from "@/lib/nav";
 import { useAuth } from "@/lib/auth";
 
@@ -21,7 +22,9 @@ export default function Home() {
             <Logo />
             <span>{shopName}</span>
           </div>
-          <div className="balance">{formatRand(merchant.balance)}</div>
+          <div>
+            <Balance amount={merchant.balance} />
+          </div>
           <CartButton />
         </section>
 
