@@ -7,6 +7,7 @@ import {
   custom,
   erc20Abi,
   formatUnits,
+  maxUint256,
   parseUnits,
   type EIP1193Provider,
 } from "viem";
@@ -269,6 +270,54 @@ export async function sendTokenExact(from: `0x${string}`, token: `0x${string}`, 
   const wc = await walletClient(from);
   const hash = await wc.writeContract({ address: token, abi: erc20Abi, functionName: "transfer", args: [to, rawAmount] });
   const receipt = await publicClient().waitForTransactionReceipt({ hash });
+  if (receipt.status !== "success") throw new WalletError("Payment failed on-chain");
+  return hash;
+}
+
+const paymentsAbi = [
+  {
+    type: "function",
+    name: "pay",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "merchant", type: "address" },
+      { name: "amount", type: "uint256" },
+      { name: "invoiceRef", type: "bytes32" },
+    ],
+    outputs: [],
+  },
+] as const;
+
+/**
+ * Pays an invoice through the MerchantPayments contract: one transaction that sends the
+ * merchant their share and the platform its fee. The first time, MetaMask also asks to let
+ * the contract use ZARK (one-time approval; the contract can only pull from the payer).
+ */
+export async function payThroughContract(
+  from: `0x${string}`,
+  p: { contract: `0x${string}`; token: `0x${string}`; merchant: `0x${string}`; amount: bigint; invoiceRef: `0x${string}` },
+  onStep?: (step: "approve" | "pay") => void,
+) {
+  if (p.amount <= 0n) throw new WalletError("Nothing to pay");
+  const selected = await currentAccount();
+  if (selected?.toLowerCase() !== from.toLowerCase()) {
+    throw new WalletError(`Switch MetaMask to ${shortAddress(from)} and try again.`);
+  }
+  const wc = await walletClient(from);
+  const pc = publicClient();
+
+  const allowance = await pc.readContract({ address: p.token, abi: erc20Abi, functionName: "allowance", args: [from, p.contract] });
+  if (allowance < p.amount) {
+    onStep?.("approve");
+    const approveHash = await wc.writeContract({ address: p.token, abi: erc20Abi, functionName: "approve", args: [p.contract, maxUint256] });
+    const r = await pc.waitForTransactionReceipt({ hash: approveHash });
+    if (r.status !== "success") throw new WalletError("Approval failed on-chain");
+  }
+
+  onStep?.("pay");
+  const hash = await wc.writeContract({ address: p.contract, abi: paymentsAbi, functionName: "pay", args: [p.token, p.merchant, p.amount, p.invoiceRef] });
+  const receipt = await pc.waitForTransactionReceipt({ hash });
   if (receipt.status !== "success") throw new WalletError("Payment failed on-chain");
   return hash;
 }

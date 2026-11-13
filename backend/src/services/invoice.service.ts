@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
+import { feeTermsOf, newInvoiceFeeTerms, splitAmount } from '../lib/fees.js';
 
 export class InvoiceService {
   static async createInvoice(data: any) {
@@ -43,6 +44,7 @@ export class InvoiceService {
         subtotal,
         totalAmount: subtotal, // Assuming no additional tax for now
         expiresAt,
+        ...newInvoiceFeeTerms(), // e.g. 2.5% deducted from the merchant, via MerchantPayments
         items: {
           create: invoiceItemsData,
         },
@@ -73,12 +75,8 @@ export class InvoiceService {
         data: { status: 'EXPIRED' },
       });
     }
-    const feePercentage = new Prisma.Decimal(invoice.merchant.feePercentage);
-    const serviceFee = invoice.totalAmount
-      .mul(feePercentage)
-      .div(100)
-      .toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
-    const netAmount = invoice.totalAmount.minus(serviceFee);
+    const terms = feeTermsOf(invoice);
+    const { fee: serviceFee, net: netAmount } = splitAmount(invoice.totalAmount, terms.percent);
 
     return {
       id: invoice.id,
@@ -87,7 +85,7 @@ export class InvoiceService {
       totalAmount: invoice.totalAmount.toFixed(2),
       serviceFee: serviceFee.toFixed(2),
       netAmount: netAmount.toFixed(2),
-      feePercentage: invoice.merchant.feePercentage,
+      feePercentage: terms.percent.toNumber(),
       currency: invoice.currency,
       expiresAt: invoice.expiresAt,
       items: invoice.items,

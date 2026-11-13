@@ -11,6 +11,7 @@ import {
   zarToTokenAtomic,
 } from '../lib/x402.js';
 import { decimalsOf } from '../lib/tokenBalance.js';
+import { feeTermsOf, splitAmount } from '../lib/fees.js';
 import { WebhookService } from './webhook.service.js';
 
 export class X402Service {
@@ -121,10 +122,8 @@ export class X402Service {
       throw new HttpError(503, 'Payments not configured: no token addresses set');
     }
 
-    const serviceFee = invoice.totalAmount
-      .mul(new Prisma.Decimal(invoice.merchant.feePercentage))
-      .div(100)
-      .toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
+    const terms = feeTermsOf(invoice);
+    const { fee: serviceFee } = splitAmount(invoice.totalAmount, terms.percent);
 
     return {
       invoiceId: invoice.id,
@@ -136,7 +135,7 @@ export class X402Service {
       subtotal: invoice.subtotal.toFixed(2),
       totalAmount: invoice.totalAmount.toFixed(2),
       serviceFee: serviceFee.toFixed(2),
-      feePercentage: invoice.merchant.feePercentage,
+      feePercentage: terms.percent.toNumber(),
       expiresAt: invoice.expiresAt,
       items: invoice.items.map((item) => ({
         name: item.name,
@@ -203,7 +202,15 @@ export class X402Service {
   static async settlePayment(
     invoiceId: string,
     txHash: string,
-    opts: { fxSnapshot?: Prisma.Decimal; asset?: string; payer?: string; merchantId?: string } = {},
+    opts: {
+      fxSnapshot?: Prisma.Decimal;
+      asset?: string;
+      payer?: string;
+      merchantId?: string;
+      /** Fee actually collected on-chain (MerchantPayments); overrides the computed fee */
+      platformFee?: Prisma.Decimal;
+      rail?: string;
+    } = {},
   ) {
     const payer = opts.payer?.toLowerCase();
     // Link the payment to a customer account if the paying wallet is registered
@@ -241,11 +248,8 @@ export class X402Service {
     // The fee is rounded to the ledger precision and the merchant gets the remainder,
     // so the two credits always sum exactly to the invoice total.
     const totalAmount = invoice.totalAmount;
-    const feePercentage = new Prisma.Decimal(invoice.merchant.feePercentage);
-    const platformFee = totalAmount
-      .mul(feePercentage)
-      .div(100)
-      .toDecimalPlaces(6, Prisma.Decimal.ROUND_HALF_UP);
+    const feePercentage = feeTermsOf(invoice).percent;
+    const platformFee = opts.platformFee ?? splitAmount(totalAmount, feePercentage).fee;
     const merchantAmount = totalAmount.minus(platformFee);
 
     // 3. Update DB in a transaction
@@ -287,7 +291,7 @@ export class X402Service {
         data: {
           transactionId: updatedTransaction.id,
           destination,
-          rail: 'X402_FACILITATOR',
+          rail: opts.rail ?? 'X402_FACILITATOR',
           txHash,
           fxSnapshot: opts.fxSnapshot,
         },

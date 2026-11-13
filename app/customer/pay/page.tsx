@@ -9,7 +9,7 @@ import QrScanner from "@/components/QrScanner";
 import { api } from "@/lib/api";
 import { API_URL, EXPLORER_TX_URL } from "@/lib/config";
 import { useWallet } from "@/lib/useWallet";
-import { sendTokenExact, shortAddress } from "@/lib/wallet";
+import { payThroughContract, sendTokenExact, shortAddress } from "@/lib/wallet";
 
 /** Receipt for an invoice, from GET /x402/invoice/:id (all amounts set by the server). */
 type Receipt = {
@@ -20,7 +20,16 @@ type Receipt = {
   total: string;
   currency: string;
   expiresAt: string;
-  pay: { symbol: "ZARK"; token: `0x${string}`; amountAtomic: string; decimals: number; chainId: number };
+  platformFee?: { percent: number; amount: string; paidBy: "MERCHANT" };
+  pay: {
+    symbol: "ZARK";
+    token: `0x${string}`;
+    amountAtomic: string;
+    decimals: number;
+    chainId: number;
+    contract?: `0x${string}` | null; // MerchantPayments: pay through it (fee collected on-chain)
+    invoiceRef?: `0x${string}`;
+  };
 };
 
 type Step =
@@ -76,8 +85,22 @@ export default function Pay() {
     setError(null);
     try {
       setStep({ kind: "paying", receipt, note: "Confirm the payment in MetaMask…" });
-      // Exactly the invoice total, straight to the merchant's registered wallet
-      const txHash = await sendTokenExact(w.address, receipt.pay.token, receipt.merchant.wallet, BigInt(receipt.pay.amountAtomic));
+      const amount = BigInt(receipt.pay.amountAtomic);
+      // Exactly the invoice total. Through the payments contract when the invoice requires it
+      // (merchant receives total minus the platform fee), otherwise straight to the merchant.
+      const txHash =
+        receipt.pay.contract && receipt.pay.invoiceRef
+          ? await payThroughContract(
+              w.address,
+              { contract: receipt.pay.contract, token: receipt.pay.token, merchant: receipt.merchant.wallet, amount, invoiceRef: receipt.pay.invoiceRef },
+              (s) =>
+                setStep({
+                  kind: "paying",
+                  receipt,
+                  note: s === "approve" ? "One-time step: allow payments with ZARK in MetaMask…" : "Confirm the payment in MetaMask…",
+                }),
+            )
+          : await sendTokenExact(w.address, receipt.pay.token, receipt.merchant.wallet, amount);
       setStep({ kind: "paying", receipt, note: "Payment sent. Verifying on the blockchain…" });
       await api(`/x402/invoice/${receipt.invoiceId}/transfer`, { body: { txHash }, auth: false });
       setStep({ kind: "done", receipt, txHash });
@@ -152,6 +175,11 @@ export default function Pay() {
             <span className="muted" style={{ fontSize: 13, letterSpacing: "0.08em", textTransform: "uppercase" }}>Total</span>
             <h2 style={{ fontSize: 34, margin: "4px 0 0", letterSpacing: "-0.02em" }}>{zark(r.total)}</h2>
             <span className="muted" style={{ fontSize: 13 }}>Exactly {Number(exact).toLocaleString("en-ZA", { maximumFractionDigits: 6 })} ZARK leaves your wallet</span>
+            {r.platformFee && Number(r.platformFee.amount) > 0 && (
+              <span className="muted" style={{ fontSize: 12, display: "block", marginTop: 2 }}>
+                No extra charge to you. The {r.platformFee.percent}% service fee is paid by the merchant.
+              </span>
+            )}
           </div>
 
           {!w.address && <div className="alert warn">Connect MetaMask to pay.</div>}

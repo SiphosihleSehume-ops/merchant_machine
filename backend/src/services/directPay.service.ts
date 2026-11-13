@@ -1,9 +1,22 @@
 import { Prisma } from '@prisma/client';
-import { createPublicClient, decodeEventLog, erc20Abi, getAddress, http } from 'viem';
+import { createPublicClient, decodeEventLog, erc20Abi, formatUnits, getAddress, http, parseAbi } from 'viem';
 import { hardhat, sepolia } from 'viem/chains';
 import { prisma } from '../lib/prisma.js';
 import { CHAIN_ID, EXPLORER_TX_URL, HttpError, RPC_URL, TOKENS } from '../lib/x402.js';
 import { X402Service } from './x402.service.js';
+import { invoiceRef } from '../lib/fees.js';
+
+const paymentsAbi = parseAbi([
+  'event PaymentMade(bytes32 indexed invoiceRef, address indexed payer, address indexed merchant, address token, uint256 amount, uint256 fee)',
+]);
+
+/** Fee terms snapshotted on the invoice (see lib/fees.ts). */
+async function invoiceTerms(invoiceId: string) {
+  return prisma.invoice.findUniqueOrThrow({
+    where: { id: invoiceId },
+    select: { platformFeeBps: true, paymentsContract: true },
+  });
+}
 
 const chain = CHAIN_ID === hardhat.id ? hardhat : sepolia;
 const client = () => createPublicClient({ chain, transport: http(RPC_URL) });
@@ -22,6 +35,7 @@ export class DirectPayService {
     const quote = await X402Service.getPayableQuote(invoiceId);
     const zark = quote.options.find((o) => o.symbol === 'ZARK');
     if (!zark) throw new HttpError(503, 'ZARK payments are not configured (TOKEN_ZARK_ADDRESS)');
+    const terms = await invoiceTerms(invoiceId);
     return {
       invoiceId: quote.invoiceId,
       merchant: { name: quote.merchantName, category: quote.merchantCategory ?? null, wallet: quote.payTo },
@@ -30,7 +44,18 @@ export class DirectPayService {
       total: quote.totalAmount,
       currency: quote.currency,
       expiresAt: quote.expiresAt,
-      pay: { symbol: 'ZARK', token: zark.asset, amountAtomic: zark.amountAtomic, decimals: zark.decimals, chainId: CHAIN_ID },
+      // Customer pays the total; the platform fee is deducted from the merchant's side
+      platformFee: { percent: quote.feePercentage, amount: quote.serviceFee, paidBy: 'MERCHANT' as const },
+      pay: {
+        symbol: 'ZARK',
+        token: zark.asset,
+        amountAtomic: zark.amountAtomic,
+        decimals: zark.decimals,
+        chainId: CHAIN_ID,
+        // Set -> pay through MerchantPayments.pay(token, merchant, amount, invoiceRef); null -> plain transfer
+        contract: terms.paymentsContract,
+        invoiceRef: invoiceRef(invoiceId),
+      },
     };
   }
 
@@ -54,22 +79,59 @@ export class DirectPayService {
 
     const merchantWallet = getAddress(quote.payTo);
     const required = BigInt(zark.amountAtomic);
-    const transfer = receipt.logs
-      .filter((l) => l.address.toLowerCase() === token.toLowerCase())
-      .map((l) => {
-        try {
-          return decodeEventLog({ abi: erc20Abi, data: l.data, topics: l.topics });
-        } catch {
-          return null;
-        }
-      })
-      .find((e) => e?.eventName === 'Transfer' && getAddress(e.args.to) === merchantWallet);
+    const terms = await invoiceTerms(invoiceId);
+    let payer: `0x${string}`;
+    let paidAmount: bigint;
+    let feeAtomic: bigint | null = null;
 
-    if (!transfer || transfer.eventName !== 'Transfer') {
-      throw new HttpError(400, "That transaction didn't send ZARK to this shop's wallet", 'TX_WRONG_RECIPIENT');
-    }
-    if (transfer.args.value < required) {
-      throw new HttpError(400, 'The amount sent is less than the invoice total', 'TX_UNDERPAID');
+    if (terms.paymentsContract) {
+      // Invoice must be paid through MerchantPayments (fee collected on-chain)
+      const event = receipt.logs
+        .filter((l) => l.address.toLowerCase() === terms.paymentsContract!.toLowerCase())
+        .map((l) => {
+          try {
+            return decodeEventLog({ abi: paymentsAbi, data: l.data, topics: l.topics });
+          } catch {
+            return null;
+          }
+        })
+        .find((e) => e?.eventName === 'PaymentMade' && e.args.invoiceRef === invoiceRef(invoiceId));
+      if (!event) {
+        throw new HttpError(400, "That transaction isn't a payment for this invoice through the payments contract", 'TX_NOT_CONTRACT_PAYMENT');
+      }
+      if (getAddress(event.args.merchant) !== merchantWallet) {
+        throw new HttpError(400, "That payment went to a different shop's wallet", 'TX_WRONG_RECIPIENT');
+      }
+      if (event.args.token.toLowerCase() !== token.toLowerCase()) {
+        throw new HttpError(400, 'That payment used a different token', 'TX_WRONG_TOKEN');
+      }
+      if (event.args.amount < required) {
+        throw new HttpError(400, 'The amount paid is less than the invoice total', 'TX_UNDERPAID');
+      }
+      payer = event.args.payer;
+      paidAmount = event.args.amount;
+      feeAtomic = event.args.fee;
+    } else {
+      // Legacy / no contract configured: plain ERC-20 transfer to the merchant
+      const transfer = receipt.logs
+        .filter((l) => l.address.toLowerCase() === token.toLowerCase())
+        .map((l) => {
+          try {
+            return decodeEventLog({ abi: erc20Abi, data: l.data, topics: l.topics });
+          } catch {
+            return null;
+          }
+        })
+        .find((e) => e?.eventName === 'Transfer' && getAddress(e.args.to) === merchantWallet);
+
+      if (!transfer || transfer.eventName !== 'Transfer') {
+        throw new HttpError(400, "That transaction didn't send ZARK to this shop's wallet", 'TX_WRONG_RECIPIENT');
+      }
+      if (transfer.args.value < required) {
+        throw new HttpError(400, 'The amount sent is less than the invoice total', 'TX_UNDERPAID');
+      }
+      payer = transfer.args.from;
+      paidAmount = transfer.args.value;
     }
 
     if (!(await X402Service.claimForSettlement(quote))) {
@@ -79,7 +141,10 @@ export class DirectPayService {
       await X402Service.settlePayment(invoiceId, txHash, {
         fxSnapshot: new Prisma.Decimal(1), // ZARK is 1:1 with ZAR
         asset: 'ZARK',
-        payer: transfer.args.from,
+        payer,
+        rail: terms.paymentsContract ? 'MERCHANT_PAYMENTS_CONTRACT' : 'DIRECT_TRANSFER',
+        // Ledger records the fee that was actually collected on-chain (ZARK is 1:1 with ZAR)
+        platformFee: feeAtomic !== null ? new Prisma.Decimal(formatUnits(feeAtomic, zark.decimals)) : undefined,
       });
     } catch (error) {
       await X402Service.markSettlementFailed(invoiceId).catch(() => undefined);
@@ -91,8 +156,9 @@ export class DirectPayService {
       merchantName: quote.merchantName,
       total: quote.totalAmount,
       currency: quote.currency,
-      paid: { symbol: 'ZARK', amountAtomic: transfer.args.value.toString(), decimals: zark.decimals },
-      payer: transfer.args.from,
+      paid: { symbol: 'ZARK', amountAtomic: paidAmount.toString(), decimals: zark.decimals },
+      platformFeeAtomic: feeAtomic?.toString() ?? null,
+      payer,
       txHash,
       explorerUrl: `${EXPLORER_TX_URL}${txHash}`,
     };

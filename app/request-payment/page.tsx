@@ -11,6 +11,9 @@ type Invoice = {
   id: string;
   status: "PENDING" | "PAID" | "EXPIRED" | "CANCELLED";
   totalAmount: string;
+  serviceFee?: string; // platform fee deducted from the merchant
+  netAmount?: string; // what the merchant receives
+  feePercentage?: number;
   expiresAt: string;
   items?: { name: string; quantity: number; unitPrice: string; total: string }[];
   payment: { asset: string | null; payerAddress: string | null; txHash: string | null } | null;
@@ -91,6 +94,13 @@ export default function RequestPayment() {
           <div className="receipt-icon"><CircleCheck size={40} /></div>
           <div className="shop">{zark(invoice.totalAmount)} received</div>
           {invoice.payment?.asset && <p className="center-note">Paid in {invoice.payment.asset}</p>}
+          {invoice.netAmount && Number(invoice.serviceFee) > 0 && (
+            <div className="lines" style={{ width: "100%" }}>
+              <div className="line"><span className="sub">Customer paid</span><span>{zark(invoice.totalAmount)}</span></div>
+              <div className="line"><span className="sub">Service fee ({invoice.feePercentage}%)</span><span className="sub">−{zark(invoice.serviceFee!)}</span></div>
+              <div className="line total"><span>You received</span><span>{zark(invoice.netAmount)}</span></div>
+            </div>
+          )}
           <div className="actions">
             <button className="btn primary" onClick={reset}>New payment</button>
           </div>

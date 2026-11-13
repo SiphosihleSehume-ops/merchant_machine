@@ -158,6 +158,10 @@ model Invoice {
   expiresAt DateTime
   createdAt DateTime @default(now())
 
+  // Fee terms snapshotted at creation (null = legacy invoice: merchant.feePercentage, ledger only)
+  platformFeeBps   Int? // 250 = 2.5%, deducted from the merchant's side
+  paymentsContract String? // MerchantPayments address: payment must go through it (fee collected on-chain)
+
   items       InvoiceItem[]
   transaction Transaction?
 }
