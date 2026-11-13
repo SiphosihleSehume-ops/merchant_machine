@@ -1,6 +1,12 @@
 // Public runtime config. Next.js inlines NEXT_PUBLIC_* at build time, so every
 // reference must be a literal `process.env.NEXT_PUBLIC_...` expression.
 
+/**
+ * TEMPORARY TEST MODE: skip sign-in and act as the backend's demo user (needs
+ * AUTH_DISABLED=true in backend/.env too). Remove both to turn authentication back on.
+ */
+export const AUTH_DISABLED = process.env.NEXT_PUBLIC_AUTH_DISABLED === "true";
+
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api/v1").replace(/\/$/, "");
 
 /** 11155111 = Ethereum Sepolia, 31337 = local `hardhat node` */

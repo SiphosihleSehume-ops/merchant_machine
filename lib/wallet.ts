@@ -7,6 +7,7 @@ import {
   custom,
   erc20Abi,
   formatUnits,
+  parseUnits,
   type EIP1193Provider,
 } from "viem";
 import { hardhat, sepolia } from "viem/chains";
@@ -120,6 +121,24 @@ export async function signWalletLink(userId: string, address: `0x${string}`) {
   return { address, issuedAt, signature };
 }
 
+/** MUST match backend/src/services/merchant.service.ts shopWalletMessage(). */
+export function shopWalletMessage(userId: string, address: string, issuedAt: string) {
+  return [
+    "Merchant Machine: receive my shop payments at this wallet.",
+    `Account: ${userId}`,
+    `Wallet: ${address.toLowerCase()}`,
+    `Issued at: ${issuedAt}`,
+  ].join("\n");
+}
+
+/** Merchant proves control of the payout wallet (signature only, no gas). */
+export async function signShopWallet(userId: string, address: `0x${string}`) {
+  const issuedAt = new Date().toISOString();
+  const wc = await walletClient(address);
+  const signature = await wc.signMessage({ message: shopWalletMessage(userId, address, issuedAt) });
+  return { address, issuedAt, signature };
+}
+
 // ------------------------------------------------------------------
 // x402
 // ------------------------------------------------------------------
@@ -180,6 +199,22 @@ export async function payInvoice(
     throw new WalletError(settlement.errorMessage || settlement.errorReason || "Settlement failed");
   }
   return { settlement, receipt: body?.data };
+}
+
+/**
+ * Sends an ERC-20 token from the connected MetaMask account (the sender pays gas in ETH).
+ * Returns once the transaction is mined.
+ */
+export async function sendToken(from: `0x${string}`, symbol: TokenSymbol, to: `0x${string}`, amount: string) {
+  const token = TOKENS.find((t) => t.symbol === symbol);
+  if (!token?.address) throw new WalletError(`${symbol} address is not configured`);
+  const value = parseUnits(amount, token.decimals);
+  if (value <= 0n) throw new WalletError("Enter an amount greater than 0");
+  const wc = await walletClient(from);
+  const hash = await wc.writeContract({ address: token.address, abi: erc20Abi, functionName: "transfer", args: [to, value] });
+  const receipt = await publicClient().waitForTransactionReceipt({ hash });
+  if (receipt.status !== "success") throw new WalletError("Transfer failed on-chain");
+  return hash;
 }
 
 export const shortAddress = (a?: string | null) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "");

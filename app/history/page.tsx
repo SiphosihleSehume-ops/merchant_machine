@@ -2,7 +2,7 @@
 
 import { ChevronDown, CreditCard } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
-import { accounts, formatRand, transactions } from "@/lib/data";
+import { accounts, formatZark, transactions } from "@/lib/data";
 
 export default function History() {
   return (
@@ -28,7 +28,7 @@ export default function History() {
               <span className="title" style={{ display: "block" }}>{t.label}</span>
               <span className="date">{t.date}</span>
             </span>
-            <span className="amount">{formatRand(t.amount)}</span>
+            <span className="amount">{formatZark(t.amount)}</span>
           </div>
         ))}
       </main>

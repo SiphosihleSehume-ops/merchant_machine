@@ -35,12 +35,14 @@ export default function Welcome() {
     const trimmedEmail = email.trim().toLowerCase();
     try {
       if (mode === "signup") {
-        await api("/auth/register", {
+        const r = await api<{ message: string; emailDelivered?: boolean }>("/auth/register", {
           body: { email: trimmedEmail, password },
           auth: false,
         });
         setOtp("");
         setSentTo(trimmedEmail);
+        // Development fallback: email failed, code is in the backend terminal
+        if (r.emailDelivered === false) setNotice(r.message);
       } else {
         const session = await login(trimmedEmail, password);
         router.replace(homeFor(session));
@@ -78,11 +80,11 @@ export default function Welcome() {
     setError(null);
     setNotice(null);
     try {
-      await api("/auth/resend-verification", {
+      const r = await api<{ message: string; emailDelivered?: boolean }>("/auth/resend-verification", {
         body: { email: to },
         auth: false,
       });
-      setNotice("A new 6-digit verification code has been sent to your email.");
+      setNotice(r.emailDelivered === false ? r.message : "A new 6-digit verification code has been sent to your email.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not resend code");
     }

@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction, RequestHandler } from 'express';
 import { ZodError } from 'zod';
+import { Prisma } from '@prisma/client';
 import { HttpError } from './x402.js';
 
 /** Wraps an async handler: Zod errors -> 400, HttpError -> its status, else 500. */
@@ -15,6 +16,10 @@ export function handle<R extends Request>(fn: (req: R, res: Response) => Promise
       }
       if (error instanceof HttpError) {
         return res.status(error.status).json({ success: false, error: error.message, code: error.code });
+      }
+      // A record the request depends on is gone (e.g. deleted or DB reset): 404, not a crash
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        return res.status(404).json({ success: false, error: 'Not found. Please sign in again if this keeps happening.', code: 'NOT_FOUND' });
       }
       console.error(error);
       res.status(500).json({ success: false, error: 'Internal Server Error' });

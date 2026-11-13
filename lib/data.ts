@@ -2,7 +2,6 @@
 
 export const merchant = {
   name: "Kasi Corner Shop",
-  balance: 259.3,
   cartCount: 0,
   shopCode: "RMT6VM",
   profileStep: 4,
@@ -13,6 +12,15 @@ export const merchant = {
 
 export const formatRand = (n: number) =>
   "R" +
+  n
+    .toFixed(2)
+    .replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+
+/** Account balances are held in ZARK (1 ZARK = R1). */
+export const ACCOUNT_CURRENCY = "ZARK";
+
+export const formatZark = (n: number) =>
+  `${ACCOUNT_CURRENCY} ` +
   n
     .toFixed(2)
     .replace(/\B(?=(\d{3})+(?!\d))/g, " ");

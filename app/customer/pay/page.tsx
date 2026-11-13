@@ -14,7 +14,7 @@ import { payInvoice, readPaymentRequired, shortAddress } from "@/lib/wallet";
 type Challenge = {
   invoice: {
     id: string;
-    merchant: { name: string; wallet: string };
+    merchant: { name: string; category?: string | null; wallet: string };
     items: { name: string; quantity: number; unitPrice: string; total: string }[];
     subtotal: string;
     total: string;
@@ -141,6 +141,7 @@ export default function Pay() {
               <Store size={14} /> You are paying
             </span>
             <span className="name">{invoice.merchant.name}</span>
+            {invoice.merchant.category && <span className="muted" style={{ fontSize: 14 }}>{invoice.merchant.category}</span>}
             <span className="muted" style={{ fontSize: 13 }}>
               <ShieldCheck size={13} style={{ verticalAlign: "-2px" }} /> Verified merchant · wallet {shortAddress(invoice.merchant.wallet)}
             </span>
