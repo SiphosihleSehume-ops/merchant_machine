@@ -2,7 +2,6 @@
 
 export const merchant = {
   name: "Kasi Corner Shop",
-  balance: 259.3,
   cartCount: 0,
   shopCode: "RMT6VM",
   profileStep: 4,

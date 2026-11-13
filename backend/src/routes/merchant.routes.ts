@@ -3,6 +3,7 @@ import { MerchantController } from '../controllers/merchant.controller.js';
 import { handle } from '../lib/http.js';
 import { AuthRequest, authenticateToken, requireRole } from '../middleware/auth.middleware.js';
 import { MerchantService } from '../services/merchant.service.js';
+import { zarkBalanceOf } from '../lib/tokenBalance.js';
 import { WebhookService } from '../services/webhook.service.js';
 import { SHOP_CATEGORIES, updateShopSchema } from '../lib/validators.js';
 
@@ -23,6 +24,12 @@ router.put('/me/shop', authenticateToken, requireRole('MERCHANT'), handle<AuthRe
   const input = updateShopSchema.parse(req.body);
   const shop = await MerchantService.updateShop(req.user!.userId, req.user!.merchantId!, input);
   res.json({ success: true, data: shop });
+}));
+
+// GET /api/v1/merchants/me/balance -> live ZARK balance of the shop's payout wallet
+router.get('/me/balance', authenticateToken, requireRole('MERCHANT'), handle<AuthRequest>(async (req, res) => {
+  const shop = await MerchantService.getShop(req.user!.merchantId!);
+  res.json({ success: true, data: await zarkBalanceOf(shop.cryptoWallet) });
 }));
 
 // GET /api/v1/merchants/me/ledger -> double-entry balances and entries
