@@ -2,6 +2,9 @@ import { Router } from 'express';
 import { X402Controller } from '../controllers/x402.controller.js';
 import { authenticateToken } from '../middleware/auth.middleware.js';
 import { claimInvoice, loadPayableInvoice, x402InvoicePayment } from '../middleware/x402.middleware.js';
+import { handle } from '../lib/http.js';
+import { HttpError } from '../lib/x402.js';
+import { DirectPayService } from '../services/directPay.service.js';
 
 const router = Router();
 
@@ -13,5 +16,16 @@ router.get('/pay/:invoiceId', loadPayableInvoice, x402InvoicePayment, claimInvoi
 
 // 3. Manual/fallback settlement (requires authenticated session + valid 32-byte txHash)
 router.post('/settle/:invoiceId', authenticateToken, X402Controller.settlePayment);
+
+// 4. Direct ZARK payment (any ERC-20, customer pays gas):
+//    GET receipt shown before Confirm, then POST the tx hash for on-chain verification
+router.get('/invoice/:invoiceId', handle(async (req, res) => {
+  res.json({ success: true, data: await DirectPayService.receipt(req.params.invoiceId as string) });
+}));
+router.post('/invoice/:invoiceId/transfer', handle(async (req, res) => {
+  const txHash = String(req.body?.txHash ?? '');
+  if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) throw new HttpError(400, 'A valid transaction hash is required');
+  res.json({ success: true, data: await DirectPayService.confirm(req.params.invoiceId as string, txHash as `0x${string}`) });
+}));
 
 export default router;

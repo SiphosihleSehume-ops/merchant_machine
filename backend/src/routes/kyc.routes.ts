@@ -4,6 +4,7 @@ import { handle } from '../lib/http.js';
 import { HttpError } from '../lib/x402.js';
 import { MAX_DOC_BYTES } from '../lib/kycStorage.js';
 import { requireAdmin } from '../lib/admin.js';
+import { readReviewToken, reviewerEmail } from '../lib/kycEmails.js';
 import { kycRejectSchema, kycSubmitSchema, SA_PROVINCES } from '../lib/validators.js';
 import { AuthRequest, authenticateToken } from '../middleware/auth.middleware.js';
 import { KycService } from '../services/kyc.service.js';
@@ -92,4 +93,41 @@ adminKycRouter.post('/:id/approve', handle<AuthRequest>(async (req, res) => {
 adminKycRouter.post('/:id/reject', handle<AuthRequest>(async (req, res) => {
   const { reason } = kycRejectSchema.parse(req.body);
   res.json({ success: true, data: await KycService.reject(req.params.id as string, req.user!.email ?? 'unknown', reason) });
+}));
+
+// ---------------- Email review: /api/v1/kyc-review/:token ----------------
+// The signed link emailed to the reviewer is the authorisation (no login needed).
+export const emailReviewRouter = Router();
+const reviewerLabel = () => `email:${reviewerEmail() || 'reviewer'}`;
+
+// GET summary of the application behind the link
+emailReviewRouter.get('/:token', handle(async (req, res) => {
+  const id = readReviewToken(req.params.token as string);
+  res.json({ success: true, data: await KycService.reviewSummary(id) });
+}));
+
+// GET decrypted document (id | proof)
+emailReviewRouter.get('/:token/documents/:kind', handle(async (req, res) => {
+  const id = readReviewToken(req.params.token as string);
+  const kind = req.params.kind;
+  if (kind !== 'id' && kind !== 'proof') throw new HttpError(400, 'Unknown document');
+  const doc = await KycService.document(id, kind);
+  res.setHeader('Content-Type', doc.mime);
+  res.setHeader('Content-Disposition', 'inline');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.send(doc.data);
+}));
+
+// POST approve -> records the wallet on-chain immediately
+emailReviewRouter.post('/:token/approve', handle(async (req, res) => {
+  const id = readReviewToken(req.params.token as string);
+  res.json({ success: true, data: await KycService.approve(id, reviewerLabel()) });
+}));
+
+// POST reject { reason }
+emailReviewRouter.post('/:token/reject', handle(async (req, res) => {
+  const id = readReviewToken(req.params.token as string);
+  const { reason } = kycRejectSchema.parse(req.body);
+  res.json({ success: true, data: await KycService.reject(id, reviewerLabel(), reason) });
 }));

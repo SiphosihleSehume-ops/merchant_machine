@@ -8,7 +8,7 @@ const publicClient = () => (client ??= createPublicClient({ chain, transport: ht
 
 /** Token decimals are read on-chain once (works for 6- and 18-decimal tokens). */
 const decimalsCache = new Map<string, number>();
-async function decimalsOf(token: `0x${string}`) {
+export async function decimalsOf(token: `0x${string}`) {
   const key = token.toLowerCase();
   if (!decimalsCache.has(key)) {
     decimalsCache.set(key, Number(await publicClient().readContract({ address: token, abi: erc20Abi, functionName: 'decimals' })));

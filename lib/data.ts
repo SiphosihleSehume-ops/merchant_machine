@@ -59,19 +59,7 @@ export const friends = [
   { id: "f3", name: "Internet Cafe #1" },
 ];
 
-export const accounts = [
-  { id: "a1", type: "System Account", name: "Shop Account" },
-];
 
-export const transactions = [
-  { id: "t1", label: "Card •••• 1974", date: "03 Nov 2026 18:34", amount: 21.45, ok: true },
-  { id: "t2", label: "Card •••• 1974", date: "03 Nov 2026 17:34", amount: 19.5, ok: true },
-  { id: "t3", label: "Card •••• 1974", date: "03 Nov 2026 17:21", amount: 35.1, ok: false },
-  { id: "t4", label: "Card •••• 1974", date: "03 Nov 2026 16:42", amount: 22.42, ok: true },
-  { id: "t5", label: "Card •••• 1974", date: "03 Nov 2026 16:41", amount: 53.62, ok: true },
-  { id: "t6", label: "Card •••• 1974", date: "03 Nov 2026 16:12", amount: 85.8, ok: true },
-  { id: "t7", label: "Card •••• 1974", date: "03 Nov 2026 14:54", amount: 53.62, ok: true },
-];
 
 export const countries = [
   { code: "BD", name: "Bangladesh" },

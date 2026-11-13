@@ -125,6 +125,7 @@ model Merchant {
   ledgerEntries LedgerEntry[]
   reversals     Reversal[]
   devices       Device[]
+  branches      BusinessAccount[]
 }
 
 // Customer Entity (PDF Section 4)
@@ -341,6 +342,25 @@ model Device {
   serial String @unique // one device can only be linked to one merchant
 
   linkedAt DateTime @default(now())
+
+  @@index([merchantId])
+}
+
+// Additional business accounts (branches) of a merchant (Accounts page). They reuse the
+// owner's approved KYC; each has its own wallet, recorded on the KYCVerification contract.
+model BusinessAccount {
+  id         String   @id @default(uuid())
+  merchantId String
+  merchant   Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  name          String
+  category      String
+  walletAddress String @unique // checksummed; proven by MetaMask signature
+
+  chainTxHash String? // KYCVerification.verify(wallet) for this branch
+  verifiedAt  DateTime?
+
+  createdAt DateTime @default(now())
 
   @@index([merchantId])
 }

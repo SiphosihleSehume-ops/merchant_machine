@@ -10,6 +10,7 @@ import {
   zarPerToken,
   zarToTokenAtomic,
 } from '../lib/x402.js';
+import { decimalsOf } from '../lib/tokenBalance.js';
 import { WebhookService } from './webhook.service.js';
 
 export class X402Service {
@@ -97,18 +98,25 @@ export class X402Service {
       throw new HttpError(422, 'Merchant has no valid crypto wallet configured');
     }
 
-    const options: PaymentOptionQuote[] = PAYMENT_TOKENS.flatMap((symbol) => {
-      const token = TOKENS[symbol];
-      if (!token.address) return []; // not deployed / not configured
-      const rate = zarPerToken(symbol);
-      return [{
-        symbol,
-        asset: token.address,
-        amountAtomic: zarToTokenAtomic(invoice.totalAmount, rate, token.decimals),
-        zarPerToken: rate.toString(),
-        eip712: { name: token.eip712Name, version: token.eip712Version },
-      }];
-    });
+    // Token decimals are read on-chain (our test tokens use 6, other ERC-20s often 18)
+    const options: PaymentOptionQuote[] = (
+      await Promise.all(
+        PAYMENT_TOKENS.map(async (symbol) => {
+          const token = TOKENS[symbol];
+          if (!token.address) return null; // not deployed / not configured
+          const decimals = await decimalsOf(token.address).catch(() => token.decimals);
+          const rate = zarPerToken(symbol);
+          return {
+            symbol,
+            asset: token.address,
+            amountAtomic: zarToTokenAtomic(invoice.totalAmount, rate, decimals),
+            decimals,
+            zarPerToken: rate.toString(),
+            eip712: { name: token.eip712Name, version: token.eip712Version },
+          };
+        }),
+      )
+    ).filter((o): o is NonNullable<typeof o> => o !== null);
     if (options.length === 0) {
       throw new HttpError(503, 'Payments not configured: no token addresses set');
     }

@@ -712,6 +712,10 @@ button.row:hover {
   background: var(--ok);
 }
 
+.txn[data-status="PENDING"]::after {
+  background: var(--accent);
+}
+
 .txn[data-ok="false"]::after {
   background: var(--bad);
 }

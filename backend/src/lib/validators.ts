@@ -176,3 +176,14 @@ export const linkDeviceSchema = z.object({
   name: z.string().trim().min(2, 'Give the device a name').max(60),
   serial: z.string().trim().regex(/^[A-Za-z0-9-]{6,32}$/, 'Serial number must be 6-32 letters or digits'),
 });
+
+// ---------------- Business accounts (branches) ----------------
+export const addBranchSchema = z.object({
+  name: z.string().trim().min(2, 'Business name must be at least 2 characters').max(80),
+  category: z.enum(SHOP_CATEGORIES, { errorMap: () => ({ message: 'Choose a category' }) }),
+  wallet: z.object({
+    address: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid wallet address'),
+    issuedAt: z.string().datetime(),
+    signature: z.string().regex(/^0x[a-fA-F0-9]+$/, 'Invalid signature'),
+  }),
+});

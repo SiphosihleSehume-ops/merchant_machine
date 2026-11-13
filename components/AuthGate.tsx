@@ -5,9 +5,12 @@ import { usePathname, useRouter } from "next/navigation";
 import { homeFor, useAuth } from "@/lib/auth";
 
 const PUBLIC = ["/welcome", "/verify-email"];
+/** Reachable signed in or not (authorised by a signed link instead), e.g. the emailed KYC review. */
+const OPEN = ["/kyc/review"];
 
 /** Where the current path requires the user to be, or null if they may stay. */
 function redirectFor(path: string, session: ReturnType<typeof useAuth>["session"]): string | null {
+  if (OPEN.some((p) => path === p || path.startsWith(`${p}/`))) return null;
   const isPublic = PUBLIC.some((p) => path === p || path.startsWith(`${p}/`));
 
   if (!session) return isPublic ? null : "/welcome";

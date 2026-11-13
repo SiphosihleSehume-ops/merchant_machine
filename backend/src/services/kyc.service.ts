@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma.js';
 import { HttpError, EXPLORER_TX_URL } from '../lib/x402.js';
 import { readDecrypted, sniffDocumentType, storeEncrypted } from '../lib/kycStorage.js';
 import { readOnChainStatus, verifyOnChain } from '../lib/kycContract.js';
+import { notifyDecision, notifySubmitted } from '../lib/kycEmails.js';
 import type { ActiveRole } from '../middleware/auth.middleware.js';
 
 export type KycAddressInput = {
@@ -43,6 +44,12 @@ function present(a: KycApplication) {
 async function walletFor(userId: string, role: ActiveRole) {
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, include: { merchant: true, customer: true } });
   return role === 'MERCHANT' ? user.merchant?.cryptoWallet ?? null : user.customer?.walletAddress ?? null;
+}
+
+/** Who to email about an application: login email + shop name. */
+async function applicantOf(userId: string) {
+  const u = await prisma.user.findUniqueOrThrow({ where: { id: userId }, include: { merchant: { select: { name: true } } } });
+  return { email: u.email, shopName: u.merchant?.name ?? null };
 }
 
 function checkDocument(file: UploadedFile | undefined, label: string) {
@@ -116,7 +123,22 @@ export class KycService {
       }),
       prisma.user.update({ where: { id: userId }, data: { kycStatus: 'PENDING' } }),
     ]);
+
+    // Reviewer gets the documents by email; applicant gets "under review" (non-blocking)
+    notifySubmitted(application, await applicantOf(userId), {
+      id: files.idDocument!.buffer,
+      idMime,
+      proof: files.proofOfAddress!.buffer,
+      proofMime,
+    });
     return present(application);
+  }
+
+  /** Summary for the email review page (opened via a signed link, no login). */
+  static async reviewSummary(id: string) {
+    const a = await prisma.kycApplication.findUnique({ where: { id } });
+    if (!a) throw new HttpError(404, 'Application not found');
+    return { ...present(a), applicant: await applicantOf(a.userId) };
   }
 
   // ---------------- Verifier ----------------
@@ -161,6 +183,7 @@ export class KycService {
       }),
       prisma.user.update({ where: { id: a.userId }, data: { kycStatus: 'VERIFIED' } }),
     ]);
+    notifyDecision(await applicantOf(a.userId), { approved: true, explorerUrl: `${EXPLORER_TX_URL}${chain.txHash}` });
     return present(updated);
   }
 
@@ -176,6 +199,7 @@ export class KycService {
       }),
       prisma.user.update({ where: { id: a.userId }, data: { kycStatus: 'REJECTED' } }),
     ]);
+    notifyDecision(await applicantOf(a.userId), { approved: false, reason });
     return present(updated);
   }
 }

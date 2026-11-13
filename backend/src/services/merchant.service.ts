@@ -53,6 +53,11 @@ export class MerchantService {
       }).catch(() => false);
       if (!valid) throw new HttpError(400, 'Signature does not match this wallet', 'INVALID_SIGNATURE');
       cryptoWallet = getAddress(address); // checksummed
+      // A wallet can belong to only one account (main shop or branch) anywhere
+      const branch = await prisma.businessAccount.findFirst({
+        where: { walletAddress: { equals: cryptoWallet, mode: 'insensitive' } },
+      });
+      if (branch) throw new HttpError(409, 'This wallet is already used by a business account', 'WALLET_IN_USE');
     }
 
     const merchant = await prisma.merchant.update({

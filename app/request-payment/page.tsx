@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { CircleCheck } from "lucide-react";
+import { CircleCheck, Plus, Trash2 } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
 import { api } from "@/lib/api";
 import { API_URL } from "@/lib/config";
@@ -12,31 +12,43 @@ type Invoice = {
   status: "PENDING" | "PAID" | "EXPIRED" | "CANCELLED";
   totalAmount: string;
   expiresAt: string;
+  items?: { name: string; quantity: number; unitPrice: string; total: string }[];
   payment: { asset: string | null; payerAddress: string | null; txHash: string | null } | null;
 };
 
-const rand = (v: string | number) => `R${Number(v).toFixed(2)}`;
+type Line = { key: number; name: string; quantity: string; unitPrice: string };
+
+const zark = (v: string | number) =>
+  `ZARK ${Number(v).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const money = (v: string) => /^\d+(\.\d{1,2})?$/.test(v) && Number(v) > 0;
+const qty = (v: string) => /^\d{1,4}$/.test(v) && Number(v) >= 1;
+const lineTotal = (l: Line) => (money(l.unitPrice) && qty(l.quantity) ? Number(l.unitPrice) * Number(l.quantity) : 0);
+
+let nextKey = 1;
+const blank = (): Line => ({ key: nextKey++, name: "", quantity: "1", unitPrice: "" });
 
 export default function RequestPayment() {
-  const [amount, setAmount] = useState("");
-  const [label, setLabel] = useState("");
+  const [lines, setLines] = useState<Line[]>([blank()]);
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
-  const value = Number(amount);
-  const valid = Number.isFinite(value) && value > 0;
+  const total = lines.reduce((sum, l) => sum + lineTotal(l), 0);
+  const allValid = lines.length > 0 && lines.every((l) => l.name.trim() && qty(l.quantity) && money(l.unitPrice));
 
-  async function create(e: React.FormEvent) {
+  const update = (key: number, patch: Partial<Line>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+
+  async function generate(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      const created = await api<Invoice & { totalAmount: string }>("/invoices", {
+      // Server recalculates every total; the client only proposes items
+      const created = await api<Invoice>("/invoices", {
         body: {
           currency: "ZAR",
-          items: [{ name: label.trim() || "Payment", quantity: 1, unitPrice: Math.round(value * 100) / 100 }],
+          items: lines.map((l) => ({ name: l.name.trim(), quantity: Number(l.quantity), unitPrice: Number(l.unitPrice) })),
         },
       });
       setInvoice({ ...created, status: "PENDING", payment: null });
@@ -67,8 +79,7 @@ export default function RequestPayment() {
 
   function reset() {
     setInvoice(null);
-    setAmount("");
-    setLabel("");
+    setLines([blank()]);
   }
 
   // ---------- Paid ----------
@@ -78,7 +89,7 @@ export default function RequestPayment() {
         <PageHeader title="Payment received" hideBalance />
         <main className="share">
           <div className="receipt-icon"><CircleCheck size={40} /></div>
-          <div className="shop">{rand(invoice.totalAmount)} received</div>
+          <div className="shop">{zark(invoice.totalAmount)} received</div>
           {invoice.payment?.asset && <p className="center-note">Paid in {invoice.payment.asset}</p>}
           <div className="actions">
             <button className="btn primary" onClick={reset}>New payment</button>
@@ -88,7 +99,7 @@ export default function RequestPayment() {
     );
   }
 
-  // ---------- Showing QR ----------
+  // ---------- QR ----------
   if (invoice) {
     const secondsLeft = Math.max(0, Math.floor((new Date(invoice.expiresAt).getTime() - now) / 1000));
     const expired = invoice.status === "EXPIRED" || secondsLeft === 0;
@@ -96,13 +107,21 @@ export default function RequestPayment() {
       <>
         <PageHeader title="Request a payment" hideBalance />
         <main className="share">
-          <div className="shop">{rand(invoice.totalAmount)}</div>
+          <div className="lines" style={{ width: "100%" }}>
+            {invoice.items?.map((i, n) => (
+              <div className="line" key={n}>
+                <span>{i.quantity} × {i.name}</span>
+                <span>{zark(i.total)}</span>
+              </div>
+            ))}
+            <div className="line total"><span>Total</span><span>{zark(invoice.totalAmount)}</span></div>
+          </div>
           {expired ? (
             <div className="alert bad" style={{ width: "100%" }}>This code has expired. Create a new one.</div>
           ) : (
             <>
               <div className="qr">
-                {/* Single-use code: encodes only this invoice's pay link, never an amount */}
+                {/* Single-use code: encodes only this invoice's link, never an amount */}
                 <QRCodeSVG value={`${API_URL}/x402/pay/${invoice.id}`} size={220} level="M" />
               </div>
               <p className="center-note">
@@ -113,10 +132,7 @@ export default function RequestPayment() {
           )}
           <div className="actions">
             {!expired && (
-              <button
-                className="btn outline"
-                onClick={() => navigator.clipboard?.writeText(`${API_URL}/x402/pay/${invoice.id}`)}
-              >
+              <button className="btn outline" onClick={() => navigator.clipboard?.writeText(`${API_URL}/x402/pay/${invoice.id}`)}>
                 Copy payment link
               </button>
             )}
@@ -127,36 +143,56 @@ export default function RequestPayment() {
     );
   }
 
-  // ---------- Amount entry ----------
+  // ---------- Item builder ----------
   return (
     <>
       <PageHeader title="Request a payment" hideBalance />
-      <form className="share" onSubmit={create}>
-        <div style={{ width: "100%" }}>
-          <label htmlFor="amount" className="code-label" style={{ display: "block", marginBottom: 8 }}>
-            Amount (ZAR)
-          </label>
-          <input
-            id="amount"
-            className="input"
-            inputMode="decimal"
-            placeholder="0.00"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
-          />
+      <form className="stack" onSubmit={generate}>
+        <p className="muted" style={{ fontSize: 14 }}>Add what the customer is buying. The QR code is created from the total.</p>
+
+        {lines.map((l, idx) => (
+          <div key={l.key} className="pay-item" style={{ gap: 10 }}>
+            <div className="top" style={{ alignItems: "center" }}>
+              <strong style={{ fontSize: 14 }}>Item {idx + 1}</strong>
+              {lines.length > 1 && (
+                <button type="button" className="icon-btn trash" aria-label={`Remove item ${idx + 1}`} onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))}>
+                  <Trash2 size={18} />
+                </button>
+              )}
+            </div>
+            <div className="form-field">
+              <label htmlFor={`name-${l.key}`}>Item bought</label>
+              <input id={`name-${l.key}`} className="text-input" placeholder="e.g. Bread" maxLength={80} value={l.name} onChange={(e) => update(l.key, { name: e.target.value })} />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 100px", gap: 10 }}>
+              <div className="form-field">
+                <label htmlFor={`price-${l.key}`}>Price (ZARK)</label>
+                <input id={`price-${l.key}`} className="text-input" inputMode="decimal" placeholder="0.00" value={l.unitPrice} onChange={(e) => update(l.key, { unitPrice: e.target.value.replace(/[^0-9.]/g, "") })} />
+              </div>
+              <div className="form-field">
+                <label htmlFor={`qty-${l.key}`}>Quantity</label>
+                <input id={`qty-${l.key}`} className="text-input" inputMode="numeric" value={l.quantity} onChange={(e) => update(l.key, { quantity: e.target.value.replace(/\D/g, "").slice(0, 4) })} />
+              </div>
+            </div>
+            <div className="line" style={{ padding: 0 }}>
+              <span className="sub">Line total</span>
+              <span>{zark(lineTotal(l))}</span>
+            </div>
+          </div>
+        ))}
+
+        <button type="button" className="btn ghost" onClick={() => setLines((ls) => [...ls, blank()])}>
+          <Plus size={18} /> Add another item
+        </button>
+
+        <div className="lines">
+          <div className="line total"><span>Total</span><span>{zark(total)}</span></div>
         </div>
-        <div style={{ width: "100%" }}>
-          <label htmlFor="label" className="code-label" style={{ display: "block", marginBottom: 8 }}>
-            What is it for? (optional)
-          </label>
-          <input id="label" className="text-input" maxLength={80} placeholder="Payment" value={label} onChange={(e) => setLabel(e.target.value)} />
-        </div>
-        {error && <div className="alert bad" style={{ width: "100%" }}>{error}</div>}
-        <div className="actions">
-          <button className="btn primary" type="submit" disabled={!valid || busy}>
-            {busy ? "Creating…" : valid ? `Get paid ${rand(value)}` : "Enter an amount"}
-          </button>
-        </div>
+
+        {error && <div className="alert bad" role="alert">{error}</div>}
+        <button className="btn primary" type="submit" disabled={!allValid || busy}>
+          {busy ? "Creating…" : allValid ? `Generate QR · ${zark(total)}` : "Complete every item"}
+        </button>
       </form>
     </>
   );

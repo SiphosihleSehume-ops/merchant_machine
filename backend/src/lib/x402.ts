@@ -88,6 +88,7 @@ export interface PaymentOptionQuote {
   symbol: TokenSymbol;
   asset: `0x${string}`;
   amountAtomic: string;
+  decimals: number;
   zarPerToken: string;
   eip712: { name: string; version: string };
 }

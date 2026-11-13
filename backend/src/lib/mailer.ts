@@ -117,3 +117,48 @@ export async function sendVerificationEmail(to: string, token: string, otp: stri
     console.log(`[mail] Sent verification email to ${to} via ${process.env.SMTP_HOST} (messageId: ${info.messageId})`);
   }
 }
+
+// ------------------------------------------------------------------
+// General-purpose mail (KYC review / status notifications)
+// ------------------------------------------------------------------
+
+export function fromAddress() {
+  return process.env.MAIL_FROM && !process.env.MAIL_FROM.includes('<your')
+    ? process.env.MAIL_FROM
+    : process.env.SMTP_USER && process.env.SMTP_USER !== 'you@example.com'
+      ? `"Merchant Machine" <${process.env.SMTP_USER}>`
+      : '"Merchant Machine" <no-reply@merchantmachine.local>';
+}
+
+const esc = (v: string) =>
+  v.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+export { esc as escapeHtml };
+
+/** Dark, on-brand email body with an optional call-to-action button. */
+export function brandedHtml(title: string, bodyHtml: string, cta?: { label: string; href: string }) {
+  return `
+    <div style="font-family:system-ui,sans-serif;max-width:520px;margin:auto;padding:24px;background:#0e0f11;color:#f4f4f5;border-radius:14px">
+      <h2 style="margin:0 0 12px">${esc(title)}</h2>
+      <div style="color:#c9cbd1;line-height:1.5">${bodyHtml}</div>
+      ${cta ? `<p style="margin:24px 0"><a href="${cta.href}" style="background:#ff7a1a;color:#190d02;padding:12px 20px;border-radius:10px;text-decoration:none;font-weight:600;display:inline-block">${esc(cta.label)}</a></p>` : ''}
+      <p style="color:#9a9da6;font-size:12px;margin-top:24px">Merchant Machine</p>
+    </div>`;
+}
+
+export async function sendMail(msg: {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+  attachments?: { filename: string; content: Buffer; contentType: string }[];
+}) {
+  const t = await getTransporter();
+  const info = await t.sendMail({ from: fromAddress(), ...msg });
+  if (usingEthereal) {
+    const preview = nodemailer.getTestMessageUrl(info);
+    if (preview) console.log(`[mail] "${msg.subject}" to ${msg.to}. Preview: ${preview}`);
+  } else {
+    console.log(`[mail] Sent "${msg.subject}" to ${msg.to}`);
+  }
+  return info;
+}

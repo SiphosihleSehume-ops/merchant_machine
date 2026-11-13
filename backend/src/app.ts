@@ -6,7 +6,7 @@ import { prisma } from './lib/prisma.js'; // Note the .js extension for ESM
 import merchantRoutes from './routes/merchant.routes.js';
 import invoiceRoutes from './routes/invoice.routes.js';
 import x402Routes from './routes/x402.routes.js';
-import { kycRouter, adminKycRouter } from './routes/kyc.routes.js';
+import { kycRouter, adminKycRouter, emailReviewRouter } from './routes/kyc.routes.js';
 import deviceRoutes from './routes/device.routes.js';
 import authRoutes from './routes/auth.routes.js';
 import customerRoutes from './routes/customer.routes.js';
@@ -76,6 +76,7 @@ app.use('/api/v1/transactions', transactionsRouter);
 app.use('/api/v1/reversals', reversalsRouter);
 app.use('/api/v1/kyc', kycRouter);
 app.use('/api/v1/admin/kyc', adminKycRouter);
+app.use('/api/v1/kyc-review', emailReviewRouter);
 app.use('/api/v1/devices', deviceRoutes);
 app.use('/api/v1/merchants', merchantRoutes);
 app.use('/api/v1/invoices', invoiceRoutes); // <-- CLEANED UP (removed duplicate)
