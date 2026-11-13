@@ -282,6 +282,10 @@ FACILITATOR_PRIVATE_KEY="$DEFAULT_HARDHAT_PK"
 TOKEN_ZARK_ADDRESS="$ZARK_ADDR"
 TOKEN_USDC_ADDRESS="$USDC_ADDR"
 TOKEN_NGN_ADDRESS="$NGN_ADDR"
+KYC_CONTRACT_ADDRESS="$KYC_ADDR"
+KYC_VERIFIER_PRIVATE_KEY="$DEFAULT_HARDHAT_PK"
+PAYMENTS_CONTRACT_ADDRESS="$PAYMENTS_ADDR"
+PLATFORM_FEE_PERCENT=2.5
 
 # ---- Demo settings ----
 ZAR_PER_USD=18.50
@@ -298,6 +302,8 @@ EOF
         TOKEN_ZARK_ADDRESS: '\"$ZARK_ADDR\"',
         TOKEN_USDC_ADDRESS: '\"$USDC_ADDR\"',
         TOKEN_NGN_ADDRESS: '\"$NGN_ADDR\"',
+        KYC_CONTRACT_ADDRESS: '\"$KYC_ADDR\"',
+        PAYMENTS_CONTRACT_ADDRESS: '\"$PAYMENTS_ADDR\"',
       };
       for (const [k, v] of Object.entries(updates)) {
         const re = new RegExp('^' + k + '=.*$', 'm');
@@ -344,6 +350,9 @@ log "Starting Backend API on http://localhost:$API_PORT (log: $BACKEND_LOG)..."
     TOKEN_ZARK_ADDRESS="$ZARK_ADDR" \
     TOKEN_USDC_ADDRESS="$USDC_ADDR" \
     TOKEN_NGN_ADDRESS="$NGN_ADDR" \
+    KYC_CONTRACT_ADDRESS="$KYC_ADDR" \
+    KYC_VERIFIER_PRIVATE_KEY="$DEFAULT_HARDHAT_PK" \
+    PAYMENTS_CONTRACT_ADDRESS="$PAYMENTS_ADDR" \
     E2E_LOCAL_MAIL="1" \
     ./node_modules/.bin/tsx src/server.ts >"$BACKEND_LOG" 2>&1
   elif [ "$MODE" != "sepolia" ]; then
@@ -355,6 +364,9 @@ log "Starting Backend API on http://localhost:$API_PORT (log: $BACKEND_LOG)..."
     TOKEN_ZARK_ADDRESS="$ZARK_ADDR" \
     TOKEN_USDC_ADDRESS="$USDC_ADDR" \
     TOKEN_NGN_ADDRESS="$NGN_ADDR" \
+    KYC_CONTRACT_ADDRESS="$KYC_ADDR" \
+    KYC_VERIFIER_PRIVATE_KEY="$DEFAULT_HARDHAT_PK" \
+    PAYMENTS_CONTRACT_ADDRESS="$PAYMENTS_ADDR" \
     ./node_modules/.bin/tsx src/server.ts >"$BACKEND_LOG" 2>&1
   else
     PORT="$API_PORT" ./node_modules/.bin/tsx src/server.ts >"$BACKEND_LOG" 2>&1

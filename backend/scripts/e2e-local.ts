@@ -191,5 +191,17 @@ const inv2 = await call('POST', '/invoices', { currency: 'ZAR', items: [{ name: 
 const dpReceipt = await call('GET', `/x402/invoice/${inv2.json.data.id}`);
 check('directPay receipt returns invoice + platformFee + ZARK pay details', dpReceipt.status === 200 && dpReceipt.json.data.total === '40.00' && dpReceipt.json.data.pay.symbol === 'ZARK', dpReceipt.json);
 
+if (dpReceipt.json?.data?.pay?.contract) {
+  const payContract = dpReceipt.json.data.pay.contract as `0x${string}`;
+  const invRef = dpReceipt.json.data.pay.invoiceRef as `0x${string}`;
+  await pub.waitForTransactionReceipt({ hash: await owner.writeContract({ address: ZARK, abi: mintAbi, functionName: 'mint', args: [ownerAcct.address, 40_000000n] }) });
+  await pub.waitForTransactionReceipt({ hash: await owner.writeContract({ address: ZARK, abi: erc20Abi, functionName: 'approve', args: [payContract, 40_000000n] }) });
+  const payAbi = [{ type: 'function', name: 'pay', inputs: [{ name: 'token', type: 'address' }, { name: 'merchant', type: 'address' }, { name: 'amount', type: 'uint256' }, { name: 'invoiceRef', type: 'bytes32' }], outputs: [], stateMutability: 'nonpayable' }] as const;
+  const mpTx = await owner.writeContract({ address: payContract, abi: payAbi, functionName: 'pay', args: [ZARK, merchantWallet, 40_000000n, invRef] });
+  await pub.waitForTransactionReceipt({ hash: mpTx });
+  const dpConfirm = await call('POST', `/x402/invoice/${inv2.json.data.id}/transfer`, { txHash: mpTx });
+  check('MerchantPayments contract payment confirmed -> 200', dpConfirm.status === 200 && dpConfirm.json.data.platformFeeAtomic === '1000000', dpConfirm.json);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
