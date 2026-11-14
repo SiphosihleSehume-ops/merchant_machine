@@ -13,6 +13,8 @@ export default function Welcome() {
   const router = useRouter();
   const { login, verifyOtp } = useAuth();
   const [mode, setMode] = useState<Mode>("signin");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
@@ -36,7 +38,7 @@ export default function Welcome() {
     try {
       if (mode === "signup") {
         const r = await api<{ message: string; emailDelivered?: boolean }>("/auth/register", {
-          body: { email: trimmedEmail, password },
+          body: { firstName: firstName.trim(), lastName: lastName.trim(), email: trimmedEmail, password },
           auth: false,
         });
         setOtp("");
@@ -159,7 +161,6 @@ export default function Welcome() {
     <main className="auth">
       <div className="auth-brand">
         <Logo size={56} variant="full" />
-        <h1>Merchant &amp; Payment Machine</h1>
         <p>Pay and get paid in seconds with digital rand and dollars.</p>
       </div>
 
@@ -168,6 +169,38 @@ export default function Welcome() {
           <button type="button" aria-pressed={mode === "signin"} onClick={() => switchMode("signin")}>Sign in</button>
           <button type="button" aria-pressed={mode === "signup"} onClick={() => switchMode("signup")}>Create account</button>
         </div>
+
+        {mode === "signup" && (
+          <>
+            <div className="form-field">
+              <label htmlFor="firstName">Name</label>
+              <input
+                id="firstName"
+                className="text-input"
+                type="text"
+                autoComplete="given-name"
+                maxLength={50}
+                required
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+              />
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="lastName">Surname</label>
+              <input
+                id="lastName"
+                className="text-input"
+                type="text"
+                autoComplete="family-name"
+                maxLength={50}
+                required
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+              />
+            </div>
+          </>
+        )}
 
         <div className="form-field">
           <label htmlFor="email">Email</label>
@@ -201,7 +234,10 @@ export default function Welcome() {
         {error && <div className="alert bad" role="alert">{error}</div>}
         {notice && <div className="alert ok">{notice}</div>}
 
-        <button className="btn primary" type="submit" disabled={busy || !email || !password}>
+        <button className="btn primary" type="submit" disabled={
+            busy || !email || !password || (mode === "signup" && (!firstName.trim() || !lastName.trim()))
+          }
+        >
           {busy ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}
         </button>
       </form>

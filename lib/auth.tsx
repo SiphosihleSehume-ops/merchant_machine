@@ -9,6 +9,9 @@ export type Role = "MERCHANT" | "CUSTOMER";
 export type SessionUser = {
   id: string;
   email: string;
+  /** Captured on Create account; null for accounts created before names were collected */
+  firstName?: string | null;
+  lastName?: string | null;
   role: Role | null;
   kycStatus?: "UNVERIFIED" | "PENDING" | "VERIFIED" | "REJECTED";
   /** KYC verifier (backend ADMIN_EMAILS) */
@@ -20,6 +23,13 @@ export type SessionUser = {
 };
 
 export type Session = { token: string; user: SessionUser };
+
+/** "Name Surname" for display; falls back to the email for older accounts without a name. */
+export function displayName(user: Pick<SessionUser, "email" | "firstName" | "lastName"> | null | undefined): string {
+  if (!user) return "";
+  const full = [user.firstName, user.lastName].filter(Boolean).join(" ").trim();
+  return full || user.email;
+}
 
 type AuthContextValue = {
   /** false until localStorage has been read on the client */

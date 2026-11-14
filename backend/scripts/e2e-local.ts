@@ -41,7 +41,7 @@ const RUN = Date.now().toString(36);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function signUp(email: string) {
-  const reg = await call('POST', '/auth/register', { email, password: 'password123' });
+  const reg = await call('POST', '/auth/register', { firstName: 'Test', lastName: 'User', email, password: 'password123' });
   check(`register ${email} -> 201`, reg.status === 201, reg);
   const early = await call('POST', '/auth/login', { email, password: 'password123' });
   check('login before verify -> 403 EMAIL_NOT_VERIFIED', early.status === 403 && early.json.code === 'EMAIL_NOT_VERIFIED', early);

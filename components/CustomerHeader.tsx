@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, LogOut, Repeat } from "lucide-react";
 import Logo from "./Logo";
-import { useAuth } from "@/lib/auth";
+import { displayName, useAuth } from "@/lib/auth";
 
 /** Simple top bar for the customer area. With `title` it shows a back button instead of the account. */
 export default function CustomerHeader({ title }: { title?: string }) {
@@ -27,7 +27,7 @@ export default function CustomerHeader({ title }: { title?: string }) {
     <header className="c-head">
       <div className="who">
         <Logo />
-        <span>{session?.user.email}</span>
+        <span>{displayName(session?.user)}</span>
       </div>
       <div style={{ display: "flex", gap: 4 }}>
         <Link href="/choose-role" className="icon-btn" aria-label="Switch role" title="Switch role">

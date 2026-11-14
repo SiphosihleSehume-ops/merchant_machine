@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronRight, Store, Wallet } from "lucide-react";
 import Logo from "@/components/Logo";
-import { homeFor, useAuth, type Role } from "@/lib/auth";
+import { displayName, homeFor, useAuth, type Role } from "@/lib/auth";
 import { connectWallet, hasMetaMask } from "@/lib/wallet";
 import { AUTH_DISABLED } from "@/lib/config";
 
@@ -120,7 +120,7 @@ export default function ChooseRole() {
         </div>
       ) : (
         <div className="signed-in">
-          <span>Signed in as {user.email}</span>
+          <span>Signed in as {displayName(user)}</span>
           <button className="link-btn" onClick={logout}>Sign out</button>
         </div>
       )}

@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
 import { merchant } from "@/lib/data";
-import { useAuth } from "@/lib/auth";
+import { displayName, useAuth } from "@/lib/auth";
 
 const items = [
   { label: "Rewards partners", Icon: Award, href: "#" },
@@ -98,7 +98,7 @@ export default function Profile() {
           <Link href="/" className="btn primary" style={{ marginTop: 6 }}>
             <Home size={18} /> Go to home
           </Link>
-          <p className="center-note" style={{ fontSize: 13 }}>Signed in as {session?.user.email}</p>
+          <p className="center-note" style={{ fontSize: 13 }}>Signed in as {displayName(session?.user)}</p>
         </div>
       </main>
     </>

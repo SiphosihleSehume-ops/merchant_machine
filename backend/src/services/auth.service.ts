@@ -90,6 +90,8 @@ async function sessionFor(userId: string, role?: ActiveRole) {
     user: {
       id: user.id,
       email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
       role: role ?? null,
       kycStatus: user.kycStatus,
       isAdmin: isAdminEmail(user.email),
@@ -104,12 +106,14 @@ async function sessionFor(userId: string, role?: ActiveRole) {
 }
 
 export class AuthService {
-  static async register(email: string, password: string) {
+  static async register(email: string, password: string, names: { firstName: string; lastName: string }) {
     const existing = await prisma.user.findUnique({ where: { email } });
 
     if (existing) {
       // Unverified: resend a fresh OTP. Verified: say nothing (no enumeration).
       if (!existing.emailVerifiedAt) {
+        // Still unverified, so the person re-registering owns this account: keep their latest name
+        await prisma.user.update({ where: { id: existing.id }, data: names });
         const delivered = await issueVerification(existing.id, email);
         return { message: delivered ? GENERIC_SENT : DEV_MAIL_NOTICE, emailDelivered: delivered };
       }
@@ -117,7 +121,7 @@ export class AuthService {
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
-    const user = await prisma.user.create({ data: { email, passwordHash } });
+    const user = await prisma.user.create({ data: { email, passwordHash, ...names } });
     const delivered = await issueVerification(user.id, email);
     return { message: delivered ? GENERIC_SENT : DEV_MAIL_NOTICE, emailDelivered: delivered };
   }

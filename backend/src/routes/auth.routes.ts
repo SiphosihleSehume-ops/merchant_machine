@@ -13,10 +13,10 @@ import { AuthService } from '../services/auth.service.js';
 
 const router = Router();
 
-// POST /api/v1/auth/register  { email, password } -> sends 6-digit OTP + verification email
+// POST /api/v1/auth/register  { firstName, lastName, email, password } -> sends 6-digit OTP + verification email
 router.post('/register', handle(async (req, res) => {
-  const { email, password } = registerSchema.parse(req.body);
-  res.status(201).json({ success: true, data: await AuthService.register(email, password) });
+  const { firstName, lastName, email, password } = registerSchema.parse(req.body);
+  res.status(201).json({ success: true, data: await AuthService.register(email, password, { firstName, lastName }) });
 
 }));
 
