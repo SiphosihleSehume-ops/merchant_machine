@@ -118,7 +118,9 @@ export class AuthService {
       // Unverified: resend a fresh OTP. Verified: say nothing (no enumeration).
       if (!existing.emailVerifiedAt) {
         // Still unverified, so the person re-registering owns this account: keep their latest name
-        await prisma.user.update({ where: { id: existing.id }, data: names });
+        if (names.firstName || names.lastName) {
+          await prisma.user.update({ where: { id: existing.id }, data: names });
+        }
         return verificationResponse(await issueVerification(existing.id, email));
       }
       return { message: GENERIC_SENT, emailDelivered: true };

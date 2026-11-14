@@ -43,8 +43,8 @@ export const settlePaymentSchema = z.object({
 const email = z.string().trim().toLowerCase().email('Invalid email format');
 
 export const registerSchema = z.object({
-  firstName: z.string().trim().min(1, 'Name is required').max(50, 'Name is too long'),
-  lastName: z.string().trim().min(1, 'Surname is required').max(50, 'Surname is too long'),
+  firstName: z.string().trim().max(50, 'Name is too long').optional().default(''),
+  lastName: z.string().trim().max(50, 'Surname is too long').optional().default(''),
   email,
   password: z.string().min(8, 'Password must be at least 8 characters').max(128),
 });
