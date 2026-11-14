@@ -127,7 +127,9 @@ main {
 .logo {
   display: inline-block;
   border-radius: 8px;
-  background: var(--accent);
+  background-color: #1a1c1f;
+  background-image: url("/logo.jpeg");
+  background-repeat: no-repeat;
   flex: none;
 }
 

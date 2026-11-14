@@ -158,7 +158,7 @@ export default function Welcome() {
   return (
     <main className="auth">
       <div className="auth-brand">
-        <Logo size={56} />
+        <Logo size={56} variant="full" />
         <h1>Merchant &amp; Payment Machine</h1>
         <p>Pay and get paid in seconds with digital rand and dollars.</p>
       </div>
