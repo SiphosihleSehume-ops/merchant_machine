@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { formatUnits } from "viem";
 import { CircleCheck, ShieldCheck, Store } from "lucide-react";
 import CustomerHeader from "@/components/CustomerHeader";
 import QrScanner from "@/components/QrScanner";
 import { api } from "@/lib/api";
-import { API_URL, EXPLORER_TX_URL } from "@/lib/config";
+import { EXPLORER_TX_URL } from "@/lib/config";
+import { appPayLink, invoiceIdFrom } from "@/lib/payLinks";
 import { useWallet } from "@/lib/useWallet";
 import { payThroughContract, sendTokenExact, shortAddress } from "@/lib/wallet";
 
@@ -39,16 +40,6 @@ type Step =
   | { kind: "paying"; receipt: Receipt; note: string }
   | { kind: "done"; receipt: Receipt; txHash: string };
 
-const PAY_PREFIX = `${API_URL}/x402/pay/`;
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** Only accept our own invoice links: a QR sticker pointing elsewhere is rejected. */
-function invoiceIdFrom(text: string): string | null {
-  const t = text.trim();
-  if (!t.startsWith(PAY_PREFIX)) return null;
-  const id = t.slice(PAY_PREFIX.length).split(/[?#/]/)[0];
-  return UUID.test(id) ? id : null;
-}
 
 const zark = (v: string | number) =>
   `ZARK ${Number(v).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -59,6 +50,19 @@ export default function Pay() {
   const [error, setError] = useState<string | null>(null);
   const [manual, setManual] = useState("");
   const [scanKey, setScanKey] = useState(0); // remount scanner to scan again
+  const opened = useRef(false);
+
+  // Opened from a copied payment link (/customer/pay?invoice=<id>): go straight to the receipt
+  useEffect(() => {
+    if (opened.current) return;
+    opened.current = true;
+    const id = new URLSearchParams(window.location.search).get("invoice");
+    if (id) {
+      window.history.replaceState(null, "", "/customer/pay");
+      load(appPayLink(id));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function load(text: string) {
     setError(null);
@@ -102,7 +106,8 @@ export default function Pay() {
             )
           : await sendTokenExact(w.address, receipt.pay.token, receipt.merchant.wallet, amount);
       setStep({ kind: "paying", receipt, note: "Payment sent. Verifying on the blockchain…" });
-      await api(`/x402/invoice/${receipt.invoiceId}/transfer`, { body: { txHash }, auth: false });
+      // Sent signed-in so the payment is linked to this customer (shows under Refunds)
+      await api(`/x402/invoice/${receipt.invoiceId}/transfer`, { body: { txHash } });
       setStep({ kind: "done", receipt, txHash });
       w.reloadBalances();
     } catch (err: any) {
@@ -231,7 +236,7 @@ export default function Pay() {
             }}
           >
             <label htmlFor="link">Or paste the payment link</label>
-            <input id="link" className="text-input" placeholder={`${PAY_PREFIX}…`} value={manual} onChange={(e) => setManual(e.target.value)} />
+            <input id="link" className="text-input" placeholder="Paste the payment link from the merchant" value={manual} onChange={(e) => setManual(e.target.value)} />
             <button className="btn ghost" type="submit" disabled={!manual.trim()}>Open</button>
           </form>
         </div>

@@ -5,7 +5,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { CircleCheck, Plus, Trash2 } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
 import { api } from "@/lib/api";
-import { API_URL } from "@/lib/config";
+import { appPayLink } from "@/lib/payLinks";
 
 type Invoice = {
   id: string;
@@ -36,6 +36,7 @@ export default function RequestPayment() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [copied, setCopied] = useState(false);
 
   const total = lines.reduce((sum, l) => sum + lineTotal(l), 0);
   const allValid = lines.length > 0 && lines.every((l) => l.name.trim() && qty(l.quantity) && money(l.unitPrice));
@@ -132,7 +133,7 @@ export default function RequestPayment() {
             <>
               <div className="qr">
                 {/* Single-use code: encodes only this invoice's link, never an amount */}
-                <QRCodeSVG value={`${API_URL}/x402/pay/${invoice.id}`} size={220} level="M" />
+                <QRCodeSVG value={appPayLink(invoice.id)} size={220} level="M" />
               </div>
               <p className="center-note">
                 Ask the customer to scan with the app. Waiting for payment… {Math.floor(secondsLeft / 60)}:
@@ -142,8 +143,12 @@ export default function RequestPayment() {
           )}
           <div className="actions">
             {!expired && (
-              <button className="btn outline" onClick={() => navigator.clipboard?.writeText(`${API_URL}/x402/pay/${invoice.id}`)}>
-                Copy payment link
+              <button className="btn outline" onClick={() => {
+                  navigator.clipboard?.writeText(appPayLink(invoice.id));
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                }}>
+                {copied ? "Link copied" : "Copy payment link"}
               </button>
             )}
             <button className="btn ghost" onClick={reset}>{expired ? "New payment" : "Cancel"}</button>

@@ -126,3 +126,18 @@ export const requireRegisteredAccount = (req: AuthRequest, res: Response, next: 
   }
   next();
 };
+
+/**
+ * Optional sign-in for public endpoints (e.g. paying an invoice): attaches the user when a
+ * valid token is sent, and otherwise just continues. Never rejects the request.
+ */
+export const optionalAuth = (req: AuthRequest, _res: Response, next: NextFunction) => {
+  const token = req.headers['authorization']?.split(' ')[1];
+  if (!token) return next();
+  try {
+    req.user = jwt.verify(token, getJwtSecret()) as AuthTokenPayload;
+  } catch {
+    /* ignore invalid tokens on public endpoints */
+  }
+  next();
+};

@@ -48,7 +48,8 @@ export default function AddAccount() {
     setError(null);
     try {
       await api("/merchants/me/accounts", { body: { name: name.trim(), category, wallet: proof } });
-      router.replace("/accounts");
+      // Back to Accounts; on-chain verification finishes in the background
+      router.replace("/accounts?added=1");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not add the account");
       setSaving(false);
@@ -110,7 +111,7 @@ export default function AddAccount() {
         {error && <div className="alert bad" role="alert">{error}</div>}
 
         <button className="btn primary" type="submit" disabled={!valid || saving}>
-          {saving ? "Verifying on-chain…" : "Add account"}
+          {saving ? "Adding account…" : "Add account"}
         </button>
         <p className="center-note" style={{ fontSize: 13 }}>
           The wallet is recorded as KYC-verified on the blockchain. No personal details go on-chain.

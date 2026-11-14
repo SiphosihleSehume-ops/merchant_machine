@@ -5,6 +5,8 @@ import { Receipt } from "lucide-react";
 import CustomerHeader from "@/components/CustomerHeader";
 import EmptyState from "@/components/EmptyState";
 import { api } from "@/lib/api";
+import { useWallet } from "@/lib/useWallet";
+import { hasMetaMask, shortAddress } from "@/lib/wallet";
 
 type Payment = {
   id: string;
@@ -55,6 +57,7 @@ export default function Refund() {
       <CustomerHeader title="Refunds" />
       <main className="stack">
         <p className="muted">Choose a payment to request a refund. The merchant has to approve it.</p>
+        <WalletLinkHint onLinked={load} />
         {error && <div className="alert bad" role="alert">{error}</div>}
         {payments === null && !error && <p className="center-note">Loading payments…</p>}
         {payments?.length === 0 && (
@@ -166,6 +169,36 @@ function RefundModal({ payment, onClose, onDone }: { payment: Payment; onClose: 
         </button>
         <button className="btn ghost" onClick={onClose} disabled={busy}>Cancel</button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Payments show here when they were made while signed in, or from the customer's verified
+ * wallet. If no wallet is verified yet, offer it so earlier payments from it appear too.
+ */
+function WalletLinkHint({ onLinked }: { onLinked: () => void }) {
+  const w = useWallet();
+  if (w.linked) return null;
+
+  async function verify() {
+    if (w.address) await w.relink();
+    else await w.connect(); // connects and asks for the ownership signature
+    onLinked();
+  }
+
+  return (
+    <div className="alert warn">
+      Don&apos;t see a payment? Verify the wallet you paid with
+      {w.address ? <> ({shortAddress(w.address)})</> : null} so its payments appear here.
+      {hasMetaMask() && (
+        <div style={{ marginTop: 8 }}>
+          <button className="btn outline" style={{ height: 40, fontSize: 13 }} onClick={verify} disabled={w.busy}>
+            {w.busy ? "Check MetaMask…" : w.address ? "Verify this wallet" : "Connect & verify wallet"}
+          </button>
+        </div>
+      )}
+      {w.error && <div style={{ marginTop: 6, color: "var(--bad)" }}>{w.error}</div>}
     </div>
   );
 }

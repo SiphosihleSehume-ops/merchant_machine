@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { X402Controller } from '../controllers/x402.controller.js';
-import { authenticateToken } from '../middleware/auth.middleware.js';
+import { AuthRequest, authenticateToken, optionalAuth } from '../middleware/auth.middleware.js';
 import { claimInvoice, loadPayableInvoice, x402InvoicePayment } from '../middleware/x402.middleware.js';
 import { handle } from '../lib/http.js';
 import { HttpError } from '../lib/x402.js';
@@ -22,10 +22,12 @@ router.post('/settle/:invoiceId', authenticateToken, X402Controller.settlePaymen
 router.get('/invoice/:invoiceId', handle(async (req, res) => {
   res.json({ success: true, data: await DirectPayService.receipt(req.params.invoiceId as string) });
 }));
-router.post('/invoice/:invoiceId/transfer', handle(async (req, res) => {
+router.post('/invoice/:invoiceId/transfer', optionalAuth, handle<AuthRequest>(async (req, res) => {
   const txHash = String(req.body?.txHash ?? '');
   if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) throw new HttpError(400, 'A valid transaction hash is required');
-  res.json({ success: true, data: await DirectPayService.confirm(req.params.invoiceId as string, txHash as `0x${string}`) });
+  // A signed-in customer gets the payment linked to their account (shows under Refunds)
+  const customerId = req.user?.role === 'CUSTOMER' ? req.user.customerId : undefined;
+  res.json({ success: true, data: await DirectPayService.confirm(req.params.invoiceId as string, txHash as `0x${string}`, customerId) });
 }));
 
 export default router;

@@ -207,6 +207,8 @@ export class X402Service {
       asset?: string;
       payer?: string;
       merchantId?: string;
+      /** Signed-in customer who paid (links the payment to their account) */
+      customerId?: string;
       /** Fee actually collected on-chain (MerchantPayments); overrides the computed fee */
       platformFee?: Prisma.Decimal;
       rail?: string;
@@ -282,7 +284,7 @@ export class X402Service {
           status: 'SETTLED',
           asset: opts.asset ?? baseTransaction.asset ?? 'ZARK',
           payerAddress: payer ?? baseTransaction.payerAddress,
-          customerId: customer?.id ?? baseTransaction.customerId,
+          customerId: opts.customerId ?? customer?.id ?? baseTransaction.customerId,
           idempotencyKey: `settle:${invoice.id}`,
         },
       });

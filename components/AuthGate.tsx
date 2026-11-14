@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { homeFor, useAuth } from "@/lib/auth";
 
 const PUBLIC = ["/welcome", "/verify-email"];
+const RETURN_KEY = "mm.returnTo";
 /** Reachable signed in or not (authorised by a signed link instead), e.g. the emailed KYC review. */
 const OPEN = ["/kyc/review"];
 
@@ -33,8 +34,30 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const target = ready ? redirectFor(path, session) : null;
 
   useEffect(() => {
-    if (target) router.replace(target);
-  }, [target, router]);
+    if (target) {
+      // Remember an opened payment link so the customer lands back on it after signing in
+      if (path === "/customer/pay" && window.location.search.includes("invoice=")) {
+        try {
+          sessionStorage.setItem(RETURN_KEY, `${path}${window.location.search}`);
+        } catch {
+          /* storage unavailable */
+        }
+      }
+      router.replace(target);
+      return;
+    }
+    // Signed in as a customer now: resume a remembered payment link once
+    if (ready && session?.user.role === "CUSTOMER") {
+      let back: string | null = null;
+      try {
+        back = sessionStorage.getItem(RETURN_KEY);
+        if (back) sessionStorage.removeItem(RETURN_KEY);
+      } catch {
+        /* storage unavailable */
+      }
+      if (back && back.startsWith("/customer/pay?")) router.replace(back);
+    }
+  }, [target, router, path, ready, session]);
 
   // Render nothing until we know the session, and while redirecting (avoids flashes)
   if (!ready || target) return <div className="gate-wait" aria-busy="true" />;
