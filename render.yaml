@@ -2,6 +2,7 @@ services:
   - type: web
     name: merchant-machine-backend
     runtime: node
+    plan: free
     rootDir: backend
     buildCommand: npm install --include=dev && npm run build
     startCommand: npm run start
@@ -13,41 +14,53 @@ services:
         value: 4000
       - key: CHAIN_ID
         value: 11155111
-      - key: RPC_URL
-        value: https://ethereum-sepolia-rpc.publicnode.com
-      - key: ZARK_TOKEN_ADDRESS
+      - key: TOKEN_ZARK_ADDRESS
         value: 0x0484eC78F68b01029710e69CCBbF194fD7864F85
-      - key: USDC_TOKEN_ADDRESS
+      - key: TOKEN_USDC_ADDRESS
         value: 0xf5f5F5133b92AB1bC94ddDACBe1aA9b8Dd176336
-      - key: NGN_TOKEN_ADDRESS
+      - key: TOKEN_NGN_ADDRESS
         value: 0x54F3E1C76aD03E946901c33eebf56fC1375ef37c
-      - key: MERCHANT_PAYMENTS_ADDRESS
+      - key: PLATFORM_FEE_PERCENT
+        value: 2.5
+      - key: PAYMENTS_CONTRACT_ADDRESS
         value: 0x903130741a2ed209b033ceb24432d67cc41e9e2f
       - key: KYC_CONTRACT_ADDRESS
         value: 0x0c1617464eb1662a63cdeb7913701102a7ce187b
+      - key: ZAR_PER_USD
+        value: 18.50
+      - key: REVERSAL_APPROVAL_HOURS
+        value: 24
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: 587
+      - key: SMTP_SECURE
+        value: "false"
       - key: DATABASE_URL
         sync: false
       - key: JWT_SECRET
         sync: false
+      - key: SEPOLIA_RPC_URL
+        sync: false
       - key: FACILITATOR_PRIVATE_KEY
         sync: false
-      - key: KYC_OWNER_PRIVATE_KEY
+      - key: KYC_VERIFIER_PRIVATE_KEY
         sync: false
       - key: KYC_ENCRYPTION_KEY
         sync: false
-      - key: KYC_ADMIN_KEY
+      - key: KYC_REVIEWER_EMAIL
         sync: false
-      - key: SMTP_HOST
-        value: smtp.gmail.com
-      - key: SMTP_PORT
-        value: 465
+      - key: ADMIN_EMAILS
+        sync: false
       - key: SMTP_USER
         sync: false
       - key: SMTP_PASS
         sync: false
-      - key: KYC_REVIEWER_EMAIL
+      - key: MAIL_FROM
         sync: false
       - key: CORS_ORIGIN
         sync: false
       - key: APP_URL
         sync: false
+
+
