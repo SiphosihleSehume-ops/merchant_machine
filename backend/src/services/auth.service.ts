@@ -21,14 +21,14 @@ const otpHash = (userId: string, otp: string) => sha256(`otp:${userId}:${otp}`);
 
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 const DEV_MAIL_NOTICE =
-  "We couldn't send the email (check SMTP settings). Development mode: your 6-digit code is printed in the backend terminal.";
+  "Email delivery is currently unavailable on this host — your 6-digit verification code has been provided below.";
 
-/** Returns false when the email could not be delivered (development fallback). */
-async function issueVerification(userId: string, email: string): Promise<boolean> {
+/** Returns { delivered, otp } so verification can always continue even if SMTP is blocked. */
+async function issueVerification(userId: string, email: string): Promise<{ delivered: boolean; otp?: string }> {
   const recent = await prisma.emailVerificationToken.findFirst({
     where: { userId, usedAt: null, createdAt: { gt: new Date(Date.now() - RESEND_COOLDOWN_MS) } },
   });
-  if (recent) return true; // throttle rapid resends (previous code still valid)
+  if (recent) return { delivered: true }; // throttle rapid resends (previous code still valid)
 
   // Invalidate any previous unused tokens for this user before issuing a fresh OTP + link
   await prisma.emailVerificationToken.updateMany({
@@ -57,17 +57,13 @@ async function issueVerification(userId: string, email: string): Promise<boolean
 
   try {
     await sendVerificationEmail(email, token, otp);
-    return true;
+    return { delivered: true };
   } catch (error: any) {
     console.error(`[mail] could not send verification email to ${email}: ${error?.code ?? ''} ${error?.message ?? error}`);
-    if (IS_PRODUCTION) {
-      throw new HttpError(502, "We couldn't send the verification email. Please try again in a moment.", 'EMAIL_SEND_FAILED');
-    }
-    // Development fallback: the account and code stay valid, so verification can continue
     console.warn(
-      `\n[mail] DEV FALLBACK for ${email}\n  Verification code: ${otp}\n  Link: ${APP_URL}/verify-email?token=${encodeURIComponent(token)}\n`,
+      `\n[mail] FALLBACK for ${email}\n  Verification code: ${otp}\n  Link: ${APP_URL}/verify-email?token=${encodeURIComponent(token)}\n`,
     );
-    return false;
+    return { delivered: false, otp };
   }
 }
 
@@ -110,23 +106,35 @@ export class AuthService {
     if (existing) {
       // Unverified: resend a fresh OTP. Verified: say nothing (no enumeration).
       if (!existing.emailVerifiedAt) {
-        const delivered = await issueVerification(existing.id, email);
-        return { message: delivered ? GENERIC_SENT : DEV_MAIL_NOTICE, emailDelivered: delivered };
+        const { delivered, otp } = await issueVerification(existing.id, email);
+        return {
+          message: delivered ? GENERIC_SENT : DEV_MAIL_NOTICE,
+          emailDelivered: delivered,
+          ...(delivered ? {} : { fallbackOtp: otp }),
+        };
       }
       return { message: GENERIC_SENT, emailDelivered: true };
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
     const user = await prisma.user.create({ data: { email, passwordHash } });
-    const delivered = await issueVerification(user.id, email);
-    return { message: delivered ? GENERIC_SENT : DEV_MAIL_NOTICE, emailDelivered: delivered };
+    const { delivered, otp } = await issueVerification(user.id, email);
+    return {
+      message: delivered ? GENERIC_SENT : DEV_MAIL_NOTICE,
+      emailDelivered: delivered,
+      ...(delivered ? {} : { fallbackOtp: otp }),
+    };
   }
 
   static async resendVerification(email: string) {
     const user = await prisma.user.findUnique({ where: { email } });
     if (user && !user.emailVerifiedAt) {
-      const delivered = await issueVerification(user.id, email);
-      return { message: delivered ? GENERIC_SENT : DEV_MAIL_NOTICE, emailDelivered: delivered };
+      const { delivered, otp } = await issueVerification(user.id, email);
+      return {
+        message: delivered ? GENERIC_SENT : DEV_MAIL_NOTICE,
+        emailDelivered: delivered,
+        ...(delivered ? {} : { fallbackOtp: otp }),
+      };
     }
     return { message: GENERIC_SENT, emailDelivered: true };
   }

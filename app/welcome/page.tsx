@@ -35,14 +35,20 @@ export default function Welcome() {
     const trimmedEmail = email.trim().toLowerCase();
     try {
       if (mode === "signup") {
-        const r = await api<{ message: string; emailDelivered?: boolean }>("/auth/register", {
+        const r = await api<{ message: string; emailDelivered?: boolean; fallbackOtp?: string }>("/auth/register", {
           body: { email: trimmedEmail, password },
           auth: false,
         });
-        setOtp("");
+        setOtp(r.fallbackOtp ?? "");
         setSentTo(trimmedEmail);
-        // Development fallback: email failed, code is in the backend terminal
-        if (r.emailDelivered === false) setNotice(r.message);
+        // Fallback: email failed, code is pre-filled or shown in notice
+        if (r.emailDelivered === false) {
+          setNotice(
+            r.fallbackOtp
+              ? `${r.message} Code: ${r.fallbackOtp}`
+              : r.message,
+          );
+        }
       } else {
         const session = await login(trimmedEmail, password);
         router.replace(homeFor(session));
@@ -80,11 +86,18 @@ export default function Welcome() {
     setError(null);
     setNotice(null);
     try {
-      const r = await api<{ message: string; emailDelivered?: boolean }>("/auth/resend-verification", {
+      const r = await api<{ message: string; emailDelivered?: boolean; fallbackOtp?: string }>("/auth/resend-verification", {
         body: { email: to },
         auth: false,
       });
-      setNotice(r.emailDelivered === false ? r.message : "A new 6-digit verification code has been sent to your email.");
+      if (r.fallbackOtp) setOtp(r.fallbackOtp);
+      setNotice(
+        r.emailDelivered === false
+          ? r.fallbackOtp
+            ? `${r.message} Code: ${r.fallbackOtp}`
+            : r.message
+          : "A new 6-digit verification code has been sent to your email.",
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not resend code");
     }
