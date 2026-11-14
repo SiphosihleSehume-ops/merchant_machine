@@ -3,6 +3,23 @@ import nodemailer, { Transporter } from 'nodemailer';
 let transporter: Transporter | null = null;
 let usingEthereal = false;
 
+const DEFAULT_PROD_APP_URL = 'https://merchant-machine.vercel.app';
+
+function resolveAppUrl(): string {
+  const raw = process.env.APP_URL?.trim().replace(/\/+$/, '');
+  if (raw && !(process.env.NODE_ENV === 'production' && raw.includes('localhost'))) {
+    return raw;
+  }
+  return process.env.NODE_ENV === 'production' ? DEFAULT_PROD_APP_URL : (raw || 'http://localhost:3000');
+}
+
+export const APP_URL = resolveAppUrl();
+
+function getRelayEndpoint(): string {
+  const base = APP_URL.startsWith('https://') ? APP_URL : DEFAULT_PROD_APP_URL;
+  return `${base.replace(/\/+$/, '')}/api/mail-relay`;
+}
+
 function hasCustomSmtp(): boolean {
   const host = process.env.SMTP_HOST?.trim();
   const user = process.env.SMTP_USER?.trim();
@@ -10,6 +27,51 @@ function hasCustomSmtp(): boolean {
   if (!host || !user || !pass) return false;
   if (user === 'you@example.com' || pass === 'app-password') return false;
   return true;
+}
+
+async function sendViaHttpsRelay(msg: {
+  to: string;
+  from: string;
+  subject: string;
+  text: string;
+  html: string;
+  attachments?: { filename: string; content: Buffer; contentType: string }[];
+}): Promise<{ messageId: string }> {
+  const smtpHost = process.env.SMTP_HOST?.trim() || 'smtp.gmail.com';
+  const smtpUser = process.env.SMTP_USER?.trim();
+  const smtpPass = process.env.SMTP_PASS?.replace(/\s+/g, '');
+  if (!smtpUser || !smtpPass) {
+    throw new Error('SMTP_USER and SMTP_PASS are required for HTTPS mail relay');
+  }
+
+  const endpoint = getRelayEndpoint();
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      to: msg.to,
+      from: msg.from,
+      subject: msg.subject,
+      text: msg.text,
+      html: msg.html,
+      smtpHost,
+      smtpUser,
+      smtpPass,
+      attachments: msg.attachments?.map((a) => ({
+        filename: a.filename,
+        contentBase64: a.content.toString('base64'),
+        contentType: a.contentType,
+      })),
+    }),
+    signal: AbortSignal.timeout(12000),
+  });
+
+  const data = (await res.json().catch(() => ({}))) as { ok?: boolean; messageId?: string; error?: string };
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || `HTTPS mail relay returned HTTP ${res.status}`);
+  }
+  console.log(`[mail] Sent "${msg.subject}" to ${msg.to} via HTTPS relay (${endpoint})`);
+  return { messageId: data.messageId || 'relay-ok' };
 }
 
 async function getTransporter(): Promise<Transporter> {
@@ -28,12 +90,18 @@ async function getTransporter(): Promise<Transporter> {
         ? {
             service: 'gmail',
             auth: { user, pass },
+            connectionTimeout: 4000,
+            greetingTimeout: 4000,
+            socketTimeout: 6000,
           }
         : {
             host,
             port: Number(process.env.SMTP_PORT || 587),
             secure: process.env.SMTP_SECURE === 'true' || Number(process.env.SMTP_PORT) === 465,
             auth: { user, pass },
+            connectionTimeout: 4000,
+            greetingTimeout: 4000,
+            socketTimeout: 6000,
           },
     );
     return transporter;
@@ -60,7 +128,53 @@ async function getTransporter(): Promise<Transporter> {
   return transporter;
 }
 
-export const APP_URL = process.env.APP_URL || 'http://localhost:3000';
+export function fromAddress() {
+  return process.env.MAIL_FROM && !process.env.MAIL_FROM.includes('<your') && !process.env.MAIL_FROM.includes('you@example.com')
+    ? process.env.MAIL_FROM
+    : process.env.SMTP_USER && process.env.SMTP_USER !== 'you@example.com'
+      ? `"Merchant Machine" <${process.env.SMTP_USER}>`
+      : '"Merchant Machine" <no-reply@merchantmachine.local>';
+}
+
+async function deliverMail(msg: {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+  attachments?: { filename: string; content: Buffer; contentType: string }[];
+}) {
+  const from = fromAddress();
+  const isRender = Boolean(process.env.RENDER);
+
+  // Render Free Tier blocks outbound SMTP ports (25, 465, 587); use HTTPS relay first on Render
+  if (isRender && hasCustomSmtp()) {
+    try {
+      return await sendViaHttpsRelay({ ...msg, from });
+    } catch (relayErr: any) {
+      console.warn(`[mail] HTTPS relay failed (${relayErr?.message}), trying direct SMTP...`);
+    }
+  }
+
+  try {
+    const t = await getTransporter();
+    const info = await t.sendMail({ from, ...msg });
+    if (usingEthereal) {
+      const previewUrl = nodemailer.getTestMessageUrl(info);
+      if (previewUrl) {
+        console.log(`[mail] Sent "${msg.subject}" to ${msg.to}. Preview inbox message at:\n  ${previewUrl}`);
+      }
+    } else {
+      console.log(`[mail] Sent "${msg.subject}" to ${msg.to} via ${process.env.SMTP_HOST} (messageId: ${info.messageId})`);
+    }
+    return info;
+  } catch (smtpErr: any) {
+    if (!isRender && hasCustomSmtp()) {
+      console.warn(`[mail] Direct SMTP failed (${smtpErr?.message}), falling back to HTTPS relay...`);
+      return await sendViaHttpsRelay({ ...msg, from });
+    }
+    throw smtpErr;
+  }
+}
 
 export async function sendVerificationEmail(to: string, token: string, otp: string) {
   const link = `${APP_URL}/verify-email?token=${encodeURIComponent(token)}`;
@@ -74,13 +188,7 @@ export async function sendVerificationEmail(to: string, token: string, otp: stri
     return;
   }
 
-  const t = await getTransporter();
-  const info = await t.sendMail({
-    from: process.env.MAIL_FROM && !process.env.MAIL_FROM.includes('you@example.com')
-      ? process.env.MAIL_FROM
-      : process.env.SMTP_USER && process.env.SMTP_USER !== 'you@example.com'
-        ? `"Merchant Machine" <${process.env.SMTP_USER}>`
-        : '"Merchant Machine" <no-reply@merchantmachine.local>',
+  await deliverMail({
     to,
     subject: `${otp} is your Merchant Machine verification code`,
     text: [
@@ -107,28 +215,11 @@ export async function sendVerificationEmail(to: string, token: string, otp: stri
         <p style="color:#9a9da6;font-size:13px">If you did not create an account, ignore this email.</p>
       </div>`,
   });
-
-  if (usingEthereal) {
-    const previewUrl = nodemailer.getTestMessageUrl(info);
-    if (previewUrl) {
-      console.log(`[mail] Sent verification email to ${to}. Preview inbox message at:\n  ${previewUrl}`);
-    }
-  } else {
-    console.log(`[mail] Sent verification email to ${to} via ${process.env.SMTP_HOST} (messageId: ${info.messageId})`);
-  }
 }
 
 // ------------------------------------------------------------------
 // General-purpose mail (KYC review / status notifications)
 // ------------------------------------------------------------------
-
-export function fromAddress() {
-  return process.env.MAIL_FROM && !process.env.MAIL_FROM.includes('<your')
-    ? process.env.MAIL_FROM
-    : process.env.SMTP_USER && process.env.SMTP_USER !== 'you@example.com'
-      ? `"Merchant Machine" <${process.env.SMTP_USER}>`
-      : '"Merchant Machine" <no-reply@merchantmachine.local>';
-}
 
 const esc = (v: string) =>
   v.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -152,13 +243,5 @@ export async function sendMail(msg: {
   html: string;
   attachments?: { filename: string; content: Buffer; contentType: string }[];
 }) {
-  const t = await getTransporter();
-  const info = await t.sendMail({ from: fromAddress(), ...msg });
-  if (usingEthereal) {
-    const preview = nodemailer.getTestMessageUrl(info);
-    if (preview) console.log(`[mail] "${msg.subject}" to ${msg.to}. Preview: ${preview}`);
-  } else {
-    console.log(`[mail] Sent "${msg.subject}" to ${msg.to}`);
-  }
-  return info;
+  return deliverMail(msg);
 }

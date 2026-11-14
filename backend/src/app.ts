@@ -22,9 +22,16 @@ const app = express();
 // Allow requests from your Next.js frontend (runs on localhost:3000)
 // Development: accept the app from localhost, 127.0.0.1 or a LAN IP (phones) so the
 // browser never blocks API calls ("Can't reach the server"). Production: CORS_ORIGIN only.
-const corsOrigins = process.env.CORS_ORIGIN?.split(',').map((o) => o.trim()).filter(Boolean);
+const configuredOrigins = process.env.CORS_ORIGIN?.split(',').map((o) => o.trim().replace(/\/+$/, '')).filter(Boolean) ?? [];
+const corsOrigins = Array.from(
+  new Set([
+    ...configuredOrigins,
+    'https://merchant-machine.vercel.app',
+    'https://merchant-machine-geekdoestechs-projects.vercel.app',
+  ]),
+);
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' ? corsOrigins ?? false : true,
+  origin: process.env.NODE_ENV === 'production' ? corsOrigins : true,
   // Browser x402 clients must be able to read the challenge and receipt headers
   exposedHeaders: ['PAYMENT-REQUIRED', 'PAYMENT-RESPONSE'],
 }));
