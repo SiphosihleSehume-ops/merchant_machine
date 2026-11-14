@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { MailCheck } from "lucide-react";
 import Logo from "@/components/Logo";
-import { api, ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api";
 import { homeFor, useAuth } from "@/lib/auth";
 
 type Mode = "signin" | "signup";
@@ -37,23 +37,64 @@ export default function Welcome() {
     const trimmedEmail = email.trim().toLowerCase();
     try {
       if (mode === "signup") {
-        const r = await api<{ message: string; emailDelivered?: boolean; fallbackOtp?: string }>("/auth/register", {
-          body: { firstName: firstName.trim(), lastName: lastName.trim(), email: trimmedEmail, password },
-          auth: false,
+        const res = await fetch("/api/auth-register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            firstName: firstName.trim(),
+            lastName: lastName.trim(),
+            email: trimmedEmail,
+            password,
+          }),
         });
+        const r = (await res.json().catch(() => ({}))) as {
+          message?: string;
+          error?: string;
+          emailDelivered?: boolean;
+          fallbackOtp?: string;
+        };
+        if (!res.ok) {
+          throw new Error(r.error || r.message || "Could not create account");
+        }
         setOtp(r.fallbackOtp ?? "");
         setSentTo(trimmedEmail);
         // Fallback: email failed, code is pre-filled or shown in notice
         if (r.emailDelivered === false) {
           setNotice(
             r.fallbackOtp
-              ? `${r.message} Code: ${r.fallbackOtp}`
-              : r.message,
+              ? `${r.message ?? ""} Code: ${r.fallbackOtp}`
+              : (r.message ?? null),
           );
         }
       } else {
-        const session = await login(trimmedEmail, password);
-        router.replace(homeFor(session));
+        const loginPromise = login(trimmedEmail, password);
+        const timeoutSymbol = Symbol("timeout");
+        const raced = await Promise.race([
+          loginPromise,
+          new Promise<typeof timeoutSymbol>((resolve) => setTimeout(() => resolve(timeoutSymbol), 3500)),
+        ]);
+        if (raced === timeoutSymbol) {
+          // Check if account is unverified (backend may be waiting on blocked SMTP)
+          const checkRes = await fetch("/api/auth-register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: trimmedEmail, resend: true }),
+          }).catch(() => null);
+          const checkData = (await checkRes?.json().catch(() => ({}))) as {
+            unverified?: boolean;
+            fallbackOtp?: string;
+          };
+          if (checkData?.unverified) {
+            setOtp(checkData.fallbackOtp ?? "");
+            setSentTo(trimmedEmail);
+            setNotice("Your email isn't verified yet. Enter the 6-digit code sent to your email.");
+            return;
+          }
+          const session = await loginPromise;
+          router.replace(homeFor(session));
+        } else {
+          router.replace(homeFor(raced));
+        }
       }
     } catch (err) {
       if (err instanceof ApiError && err.code === "EMAIL_NOT_VERIFIED") {
@@ -88,16 +129,26 @@ export default function Welcome() {
     setError(null);
     setNotice(null);
     try {
-      const r = await api<{ message: string; emailDelivered?: boolean; fallbackOtp?: string }>("/auth/resend-verification", {
-        body: { email: to },
-        auth: false,
+      const res = await fetch("/api/auth-register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: to, resend: true }),
       });
+      const r = (await res.json().catch(() => ({}))) as {
+        message?: string;
+        error?: string;
+        emailDelivered?: boolean;
+        fallbackOtp?: string;
+      };
+      if (!res.ok) {
+        throw new Error(r.error || r.message || "Could not resend code");
+      }
       if (r.fallbackOtp) setOtp(r.fallbackOtp);
       setNotice(
         r.emailDelivered === false
           ? r.fallbackOtp
-            ? `${r.message} Code: ${r.fallbackOtp}`
-            : r.message
+            ? `${r.message ?? ""} Code: ${r.fallbackOtp}`
+            : (r.message ?? "Code generated.")
           : "A new 6-digit verification code has been sent to your email.",
       );
     } catch (err) {
