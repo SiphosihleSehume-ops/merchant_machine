@@ -25,12 +25,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
-MODE="local"
+MODE="auto"
 FORCE_LOCAL_DB=0
 for arg in "$@"; do
   case "$arg" in
     --e2e) MODE="e2e" ;;
     --sepolia) MODE="sepolia" ;;
+    --local) MODE="local" ;;
     --local-db) FORCE_LOCAL_DB=1 ;;
     -h|--help)
       sed -n '2,22p' "${BASH_SOURCE[0]}"
@@ -42,6 +43,14 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+if [ "$MODE" = "auto" ]; then
+  if [ -f "$ROOT_DIR/backend/.env" ] && grep -qE '^CHAIN_ID=11155111' "$ROOT_DIR/backend/.env"; then
+    MODE="sepolia"
+  else
+    MODE="local"
+  fi
+fi
 
 LOG_DIR="$ROOT_DIR/.logs"
 mkdir -p "$LOG_DIR"
@@ -256,7 +265,7 @@ if [ "$MODE" = "e2e" ]; then
   API_PORT="${PORT:-4100}"
 fi
 
-if [ "$MODE" != "sepolia" ]; then
+if [ "$MODE" = "local" ]; then
   if [ ! -f "$ROOT_DIR/backend/.env" ]; then
     log "Creating backend/.env with local defaults and Nodemailer SMTP config..."
     cat >"$ROOT_DIR/backend/.env" <<EOF

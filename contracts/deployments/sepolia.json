@@ -1,0 +1,30 @@
+{
+  "network": "sepolia",
+  "chainId": 11155111,
+  "caip2": "eip155:11155111",
+  "deployer": "0x7fa89244d97cdf91d7fca5a5f3075fbefc4a9e82",
+  "deployedAt": "2026-11-12T22:00:00.000Z",
+  "tokens": {
+    "ZARK": {
+      "address": "0x0484eC78F68b01029710e69CCBbF194fD7864F85",
+      "name": "ZARK Stablecoin",
+      "symbol": "ZARK",
+      "version": "1",
+      "decimals": 6
+    },
+    "USDC": {
+      "address": "0xf5f5F5133b92AB1bC94ddDACBe1aA9b8Dd176336",
+      "name": "USD Coin",
+      "symbol": "USDC",
+      "version": "2",
+      "decimals": 6
+    },
+    "NGN": {
+      "address": "0x54F3E1C76aD03E946901c33eebf56fC1375ef37c",
+      "name": "Nigerian Naira Stablecoin",
+      "symbol": "NGN",
+      "version": "1",
+      "decimals": 6
+    }
+  }
+}
