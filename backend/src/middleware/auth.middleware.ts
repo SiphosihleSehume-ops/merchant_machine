@@ -133,11 +133,21 @@ export const requireRegisteredAccount = (req: AuthRequest, res: Response, next: 
  */
 export const optionalAuth = (req: AuthRequest, _res: Response, next: NextFunction) => {
   const token = req.headers['authorization']?.split(' ')[1];
-  if (!token) return next();
-  try {
-    req.user = jwt.verify(token, getJwtSecret()) as AuthTokenPayload;
-  } catch {
-    /* ignore invalid tokens on public endpoints */
+  if (token) {
+    try {
+      req.user = jwt.verify(token, getJwtSecret()) as AuthTokenPayload;
+      return next();
+    } catch {
+      /* ignore invalid tokens on public endpoints */
+    }
+  }
+  if (AUTH_DISABLED && req.headers['x-demo-role']) {
+    return demoUserFor(req.headers['x-demo-role'])
+      .then((user) => {
+        req.user = user;
+        next();
+      })
+      .catch(() => next());
   }
   next();
 };

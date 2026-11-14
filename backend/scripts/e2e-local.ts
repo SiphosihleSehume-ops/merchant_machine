@@ -199,8 +199,23 @@ if (dpReceipt.json?.data?.pay?.contract) {
   const payAbi = [{ type: 'function', name: 'pay', inputs: [{ name: 'token', type: 'address' }, { name: 'merchant', type: 'address' }, { name: 'amount', type: 'uint256' }, { name: 'invoiceRef', type: 'bytes32' }], outputs: [], stateMutability: 'nonpayable' }] as const;
   const mpTx = await owner.writeContract({ address: payContract, abi: payAbi, functionName: 'pay', args: [ZARK, merchantWallet, 40_000000n, invRef] });
   await pub.waitForTransactionReceipt({ hash: mpTx });
-  const dpConfirm = await call('POST', `/x402/invoice/${inv2.json.data.id}/transfer`, { txHash: mpTx });
+  const dpConfirm = await call('POST', `/x402/invoice/${inv2.json.data.id}/transfer`, { txHash: mpTx }, cTok);
   check('MerchantPayments contract payment confirmed -> 200', dpConfirm.status === 200 && dpConfirm.json.data.platformFeeAtomic === '1000000', dpConfirm.json);
+
+  const cTxsWithWallet = await call('GET', `/transactions?wallet=${ownerAcct.address}`, undefined, cTok);
+  const dpTx = cTxsWithWallet.json?.data?.find((x: any) => x.invoiceId === inv2.json.data.id);
+  check('customer sees directPay transaction under /transactions?wallet=', Boolean(dpTx), cTxsWithWallet.json);
+  if (dpTx) {
+    const instantRev = await call('POST', '/reversals', {
+      transactionId: dpTx.id,
+      amount: 20,
+      reason: 'Partial refund test',
+      acknowledgeNonRefundableFee: true,
+      walletAddress: ownerAcct.address,
+      autoApprove: true,
+    }, cTok);
+    check('customer partial instant refund (R20.00) -> COMPLETED with refundTxHash', instantRev.status === 201 && instantRev.json.data.status === 'COMPLETED' && instantRev.json.data.amount === '20.00' && /^0x[0-9a-f]{64}$/.test(instantRev.json.data.refundTxHash), instantRev.json);
+  }
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

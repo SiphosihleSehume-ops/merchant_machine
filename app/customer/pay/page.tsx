@@ -144,6 +144,9 @@ export default function Pay() {
           <a className="btn ghost" href={`${EXPLORER_TX_URL}${step.txHash}`} target="_blank" rel="noreferrer">
             View transaction {shortAddress(step.txHash)}
           </a>
+          <Link href="/customer/refund" className="btn outline">
+            Request a refund
+          </Link>
           <Link href="/customer" className="btn primary">Done</Link>
         </main>
       </>

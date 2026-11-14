@@ -104,6 +104,10 @@ export const createReversalSchema = z.object({
   acknowledgeNonRefundableFee: z.literal(true, {
     errorMap: () => ({ message: 'You must acknowledge that the service fee is non-refundable' }),
   }),
+  /** Optional connected MetaMask wallet address to match payments made before wallet linking. */
+  walletAddress: evmAddress.optional(),
+  /** When true, attempts immediate on-chain treasury refund to the customer's wallet. */
+  autoApprove: z.boolean().optional(),
 });
 
 export const respondReversalSchema = z

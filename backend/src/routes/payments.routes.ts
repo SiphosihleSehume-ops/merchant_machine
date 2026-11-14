@@ -14,7 +14,8 @@ function activeAuth(req: AuthRequest) {
 // GET /api/v1/transactions  (scoped to the active merchant or customer)
 export const transactionsRouter = Router();
 transactionsRouter.get('/', authenticateToken, handle<AuthRequest>(async (req, res) => {
-  res.json({ success: true, data: await PaymentsService.listTransactions(activeAuth(req)) });
+  const wallet = typeof req.query.wallet === 'string' ? req.query.wallet : undefined;
+  res.json({ success: true, data: await PaymentsService.listTransactions(activeAuth(req), wallet) });
 }));
 
 // /api/v1/reversals
@@ -26,6 +27,11 @@ reversalsRouter.post('/', authenticateToken, requireRole('CUSTOMER'), handle<Aut
   const input = createReversalSchema.parse(req.body);
   const reversal = await PaymentsService.requestReversal(req.user!.customerId!, input);
   res.status(201).json({ success: true, data: reversal });
+}));
+reversalsRouter.post('/:id/claim', authenticateToken, requireRole('CUSTOMER'), handle<AuthRequest>(async (req, res) => {
+  const walletAddress = typeof req.body?.walletAddress === 'string' ? req.body.walletAddress : undefined;
+  const reversal = await PaymentsService.claimReversal(req.user!.customerId!, req.params.id as string, walletAddress);
+  res.json({ success: true, data: reversal });
 }));
 
 // PATCH /api/v1/reversals/:id  { action: "APPROVE" | "DECLINE", reason?, refundTxHash? }

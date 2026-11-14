@@ -19,6 +19,13 @@ const mintAbi = [
     outputs: [],
     stateMutability: 'nonpayable',
   },
+  {
+    type: 'function',
+    name: 'faucet',
+    inputs: [],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
 ] as const;
 
 /**
@@ -88,21 +95,49 @@ export async function sendTreasuryRefund(params: {
     args: [account.address],
   });
 
-  const hash =
-    balance >= params.amountAtomic
-      ? await client.writeContract({
-          address: params.tokenAddress,
-          abi: erc20Abi,
-          functionName: 'transfer',
-          args: [params.to, params.amountAtomic],
-        })
-      : await client.writeContract({
-          address: params.tokenAddress,
-          abi: mintAbi,
-          functionName: 'mint',
-          args: [params.to, params.amountAtomic],
-        });
+  if (balance >= params.amountAtomic) {
+    const hash = await client.writeContract({
+      address: params.tokenAddress,
+      abi: erc20Abi,
+      functionName: 'transfer',
+      args: [params.to, params.amountAtomic],
+    });
+    const receipt = await client.waitForTransactionReceipt({ hash });
+    if (receipt.status !== 'success') {
+      throw new Error(`On-chain refund transaction reverted (${hash})`);
+    }
+    return hash;
+  }
 
+  try {
+    const hash = await client.writeContract({
+      address: params.tokenAddress,
+      abi: mintAbi,
+      functionName: 'mint',
+      args: [params.to, params.amountAtomic],
+    });
+    const receipt = await client.waitForTransactionReceipt({ hash });
+    if (receipt.status === 'success') {
+      return hash;
+    }
+  } catch {
+    // Fallback to faucet + transfer when relayer is not the TestStablecoin owner
+  }
+
+  const faucetHash = await client.writeContract({
+    address: params.tokenAddress,
+    abi: mintAbi,
+    functionName: 'faucet',
+    args: [],
+  });
+  await client.waitForTransactionReceipt({ hash: faucetHash });
+
+  const hash = await client.writeContract({
+    address: params.tokenAddress,
+    abi: erc20Abi,
+    functionName: 'transfer',
+    args: [params.to, params.amountAtomic],
+  });
   const receipt = await client.waitForTransactionReceipt({ hash });
   if (receipt.status !== 'success') {
     throw new Error(`On-chain refund transaction reverted (${hash})`);

@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { isRelayerConfigured, sendTreasuryRefund } from '../lib/facilitator.js';
 import { prisma } from '../lib/prisma.js';
+import { decimalsOf } from '../lib/tokenBalance.js';
 import {
   EVM_ADDRESS_RE,
   EXPLORER_TX_URL,
@@ -55,22 +56,26 @@ function present(tx: TxRow, serviceFee?: Prisma.Decimal) {
           status: tx.reversal.status,
           amount: tx.reversal.amount.toFixed(2),
           reversalFee: tx.reversal.reversalFee.toFixed(2),
+          reason: tx.reversal.reason,
           expiresAt: tx.reversal.expiresAt,
           merchantApprovedAt: tx.reversal.merchantApprovedAt,
           completedAt: tx.reversal.completedAt,
           refundTxHash: tx.reversal.refundTxHash,
+          refundExplorerUrl: tx.reversal.refundTxHash ? `${EXPLORER_TX_URL}${tx.reversal.refundTxHash}` : null,
         }
       : null,
   };
 }
 
-async function customerScope(customerId: string): Promise<Prisma.TransactionWhereInput> {
+async function customerScope(customerId: string, extraWallet?: string): Promise<Prisma.TransactionWhereInput> {
   const customer = await prisma.customer.findUniqueOrThrow({ where: { id: customerId } });
-  // Payments are linked by account, or by the wallet that paid (before linking)
+  const extra = extraWallet && EVM_ADDRESS_RE.test(extraWallet) ? extraWallet.toLowerCase() : null;
+  // Payments are linked by account, by the verified wallet, or by the currently connected MetaMask wallet
   return {
     OR: [
       { customerId },
       ...(customer.walletAddress ? [{ payerAddress: customer.walletAddress }] : []),
+      ...(extra && extra !== customer.walletAddress ? [{ payerAddress: extra }] : []),
     ],
   };
 }
@@ -100,7 +105,10 @@ async function expireStaleReversals(where: Prisma.ReversalWhereInput) {
 }
 
 export class PaymentsService {
-  static async listTransactions(auth: { role: ActiveRole; merchantId?: string; customerId?: string }) {
+  static async listTransactions(
+    auth: { role: ActiveRole; merchantId?: string; customerId?: string },
+    walletAddress?: string,
+  ) {
     if (auth.role === 'MERCHANT') {
       await expireStaleReversals({ merchantId: auth.merchantId! });
     } else if (auth.customerId) {
@@ -110,7 +118,7 @@ export class PaymentsService {
     const where =
       auth.role === 'MERCHANT'
         ? { merchantId: auth.merchantId! }
-        : await customerScope(auth.customerId!);
+        : await customerScope(auth.customerId!, walletAddress);
 
     const rows = await prisma.transaction.findMany({
       where,
@@ -130,13 +138,20 @@ export class PaymentsService {
    * Customer asks for a reversal. The platform service fee is non-refundable, so the
    * maximum reversal amount is the payment minus that fee. Supports partial refunds
    * (`input.amount <= maxRefundable`) as well as full net refunds. The merchant must
-   * respond before `expiresAt`.
+   * respond before `expiresAt` (or when `autoApprove: true` is passed and the treasury
+   * relayer is configured, executes the on-chain refund immediately).
    */
   static async requestReversal(
     customerId: string,
-    input: { transactionId: string; amount?: number; reason?: string },
+    input: {
+      transactionId: string;
+      amount?: number;
+      reason?: string;
+      walletAddress?: string;
+      autoApprove?: boolean;
+    },
   ) {
-    const scope = await customerScope(customerId);
+    const scope = await customerScope(customerId, input.walletAddress);
     const tx = await prisma.transaction.findFirst({
       where: { AND: [{ id: input.transactionId }, scope] },
       include: { reversal: true },
@@ -168,8 +183,9 @@ export class PaymentsService {
 
     const now = new Date();
 
+    let createdReversal;
     try {
-      const reversal = await prisma.$transaction(async (db) => {
+      createdReversal = await prisma.$transaction(async (db) => {
         if (!tx.customerId) {
           await db.transaction.update({ where: { id: tx.id }, data: { customerId } });
         }
@@ -203,19 +219,73 @@ export class PaymentsService {
 
         return created;
       });
-      return {
-        id: reversal.id,
-        status: reversal.status,
-        amount: reversal.amount.toFixed(2),
-        reversalFee: reversal.reversalFee.toFixed(2),
-        expiresAt: reversal.expiresAt,
-      };
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         throw new HttpError(409, 'A reversal already exists for this payment');
       }
       throw error;
     }
+
+    if (input.autoApprove && isRelayerConfigured()) {
+      try {
+        return await PaymentsService.respondToReversal(
+          tx.merchantId,
+          createdReversal.id,
+          { decision: 'APPROVE' },
+          { revertToPendingOnError: true, recipientOverride: input.walletAddress },
+        );
+      } catch {
+        // Fallback to PENDING_MERCHANT if relayer on-chain transfer could not complete automatically
+      }
+    }
+
+    return {
+      id: createdReversal.id,
+      status: createdReversal.status,
+      amount: createdReversal.amount.toFixed(2),
+      reversalFee: createdReversal.reversalFee.toFixed(2),
+      expiresAt: createdReversal.expiresAt,
+      refundTxHash: createdReversal.refundTxHash,
+      refundExplorerUrl: null,
+    };
+  }
+
+  /**
+   * Allows a customer to trigger/claim an on-chain refund for a pending or failed reversal
+   * when the treasury relayer is configured.
+   */
+  static async claimReversal(customerId: string, reversalId: string, walletAddress?: string) {
+    const reversal = await prisma.reversal.findFirst({
+      where: { id: reversalId, customerId },
+    });
+    if (!reversal) {
+      throw new HttpError(404, 'Reversal not found');
+    }
+    if (reversal.status === 'COMPLETED') {
+      return {
+        id: reversal.id,
+        transactionId: reversal.transactionId,
+        status: reversal.status,
+        amount: reversal.amount.toFixed(2),
+        reversalFee: reversal.reversalFee.toFixed(2),
+        expiresAt: reversal.expiresAt,
+        completedAt: reversal.completedAt,
+        refundTxHash: reversal.refundTxHash,
+        refundExplorerUrl: reversal.refundTxHash ? `${EXPLORER_TX_URL}${reversal.refundTxHash}` : null,
+      };
+    }
+    if (reversal.status === 'FAILED') {
+      await prisma.reversal.update({
+        where: { id: reversal.id },
+        data: { status: 'PENDING_MERCHANT', completedAt: null },
+      });
+    }
+    return PaymentsService.respondToReversal(
+      reversal.merchantId,
+      reversal.id,
+      { decision: 'APPROVE' },
+      { revertToPendingOnError: true, recipientOverride: walletAddress },
+    );
   }
 
   /**
@@ -231,6 +301,7 @@ export class PaymentsService {
     merchantId: string,
     reversalId: string,
     input: { decision: 'APPROVE' | 'DECLINE'; reason?: string; refundTxHash?: `0x${string}` },
+    opts: { revertToPendingOnError?: boolean; recipientOverride?: string } = {},
   ) {
     const reversal = await prisma.reversal.findFirst({
       where: { id: reversalId, merchantId },
@@ -316,20 +387,36 @@ export class PaymentsService {
 
     // 2. Execute new on-chain refund payment back to the customer (without conversion markup)
     let refundTxHash: string | null = input.refundTxHash ?? null;
-    const recipient = (reversal.transaction.payerAddress ?? reversal.customer.walletAddress)?.toLowerCase();
+    const recipient = (
+      reversal.transaction.payerAddress ??
+      reversal.customer.walletAddress ??
+      opts.recipientOverride
+    )?.toLowerCase();
     const assetSymbol = ((reversal.transaction.asset as TokenSymbol | null) ?? 'ZARK') as TokenSymbol;
     const token = TOKENS[assetSymbol] ?? TOKENS.ZARK;
 
     if (!refundTxHash && isRelayerConfigured() && token?.address && recipient && EVM_ADDRESS_RE.test(recipient)) {
       try {
+        const decimals = await decimalsOf(token.address).catch(() => token.decimals);
         const rate = reversal.transaction.settlement?.fxSnapshot ?? zarPerToken(token.symbol);
-        const amountAtomic = BigInt(zarToTokenAtomic(reversal.amount, rate, token.decimals));
+        const amountAtomic = BigInt(zarToTokenAtomic(reversal.amount, rate, decimals));
         refundTxHash = await sendTreasuryRefund({
           tokenAddress: token.address,
           to: recipient as `0x${string}`,
           amountAtomic,
         });
       } catch (error: any) {
+        if (opts.revertToPendingOnError) {
+          await prisma.reversal.update({
+            where: { id: reversal.id },
+            data: { status: 'PENDING_MERCHANT', merchantApprovedAt: null },
+          });
+          throw new HttpError(
+            502,
+            error?.message || 'Automatic treasury refund unavailable; awaiting merchant approval',
+            'REFUND_TX_FAILED',
+          );
+        }
         await prisma.reversal.update({
           where: { id: reversal.id },
           data: { status: 'FAILED', completedAt: new Date() },
@@ -431,6 +518,7 @@ export class PaymentsService {
       merchantApprovedAt: completed.merchantApprovedAt,
       completedAt: completed.completedAt,
       refundTxHash: completed.refundTxHash,
+      refundExplorerUrl: completed.refundTxHash ? `${EXPLORER_TX_URL}${completed.refundTxHash}` : null,
     };
   }
 
@@ -440,7 +528,10 @@ export class PaymentsService {
 
     const rows = await prisma.reversal.findMany({
       where,
-      include: { transaction: { include: { merchant: { select: { name: true } } } } },
+      include: {
+        customer: { select: { walletAddress: true } },
+        transaction: { include: { merchant: { select: { name: true } } } },
+      },
       orderBy: { createdAt: 'desc' },
       take: 100,
     });
@@ -448,6 +539,9 @@ export class PaymentsService {
       id: r.id,
       transactionId: r.transactionId,
       merchantName: r.transaction.merchant.name,
+      originalAmount: r.transaction.amount.toFixed(2),
+      asset: r.transaction.asset ?? 'ZARK',
+      payerAddress: r.transaction.payerAddress ?? r.customer?.walletAddress ?? null,
       status: r.status,
       amount: r.amount.toFixed(2),
       reversalFee: r.reversalFee.toFixed(2),
@@ -456,6 +550,7 @@ export class PaymentsService {
       merchantApprovedAt: r.merchantApprovedAt,
       completedAt: r.completedAt,
       refundTxHash: r.refundTxHash,
+      refundExplorerUrl: r.refundTxHash ? `${EXPLORER_TX_URL}${r.refundTxHash}` : null,
       createdAt: r.createdAt,
     }));
   }

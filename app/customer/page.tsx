@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { BadgeCheck, Droplets, RefreshCw, RotateCcw, ScanLine, Wallet } from "lucide-react";
 import CustomerHeader from "@/components/CustomerHeader";
+import { api } from "@/lib/api";
 import { useWallet } from "@/lib/useWallet";
 import { claimFaucet, hasMetaMask, shortAddress } from "@/lib/wallet";
 import { CHAIN_ID, TOKENS, type TokenSymbol } from "@/lib/config";
+import type { CustomerPayment } from "@/app/customer/refund/page";
 
 const fmt = (amount: string, symbol: string) =>
   Number(amount).toLocaleString("en-ZA", {
@@ -14,10 +16,31 @@ const fmt = (amount: string, symbol: string) =>
     maximumFractionDigits: symbol === "ETH" ? 4 : 2,
   });
 
+const rand = (v: string | number) =>
+  "R" + Number(v).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const when = (d: string) =>
+  new Date(d).toLocaleString("en-ZA", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+
 export default function CustomerHome() {
   const w = useWallet();
   const [faucetBusy, setFaucetBusy] = useState<TokenSymbol | null>(null);
+  const [recent, setRecent] = useState<CustomerPayment[]>([]);
   const metaMask = hasMetaMask();
+
+  const loadRecent = useCallback(async () => {
+    try {
+      const q = w.address ? `?wallet=${encodeURIComponent(w.address)}` : "";
+      const list = await api<CustomerPayment[]>(`/transactions${q}`);
+      setRecent(list.slice(0, 5));
+    } catch {
+      /* ignore on dashboard */
+    }
+  }, [w.address]);
+
+  useEffect(() => {
+    loadRecent();
+  }, [loadRecent]);
 
   async function faucet(symbol: TokenSymbol) {
     if (!w.address) return;
@@ -116,6 +139,52 @@ export default function CustomerHome() {
           <p className="center-note" style={{ padding: "16px var(--gutter)" }}>
             Connect MetaMask first so you can pay merchants.
           </p>
+        )}
+
+        {recent.length > 0 && (
+          <section className="stack" style={{ marginTop: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <strong style={{ fontSize: 15 }}>Recent payments</strong>
+              <Link href="/customer/refund" className="link-btn" style={{ fontSize: 13 }}>
+                View all &amp; refunds
+              </Link>
+            </div>
+            {recent.map((p) => (
+              <div className="pay-item" key={p.id}>
+                <div className="top">
+                  <div>
+                    <div className="merchant">{p.merchantName}</div>
+                    <div className="meta">
+                      {when(p.createdAt)}
+                      {p.items.length > 0 && ` · ${p.items.map((i) => `${i.quantity}× ${i.name}`).join(", ")}`}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div className="amt">{rand(p.amount)}</div>
+                    <span className="badge" data-status={p.status}>{p.status}</span>
+                  </div>
+                </div>
+                {p.reversal ? (
+                  <div className="meta">
+                    Refund:{" "}
+                    <span className="badge" data-status={p.reversal.status}>
+                      {p.reversal.status === "COMPLETED" ? "Refunded" : p.reversal.status}
+                    </span>{" "}
+                    {rand(p.reversal.amount)}
+                  </div>
+                ) : p.status === "SETTLED" ? (
+                  <Link
+                    href={`/customer/refund?tx=${encodeURIComponent(p.id)}`}
+                    className="btn outline"
+                    style={{ height: 36, fontSize: 13, alignSelf: "flex-start", padding: "0 14px" }}
+                  >
+                    <RotateCcw size={13} style={{ marginRight: 6 }} />
+                    Get refund
+                  </Link>
+                ) : null}
+              </div>
+            ))}
+          </section>
         )}
       </main>
     </>
