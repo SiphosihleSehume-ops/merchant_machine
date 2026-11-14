@@ -59,7 +59,7 @@ export class DirectPayService {
     };
   }
 
-  static async confirm(invoiceId: string, txHash: `0x${string}`) {
+  static async confirm(invoiceId: string, txHash: `0x${string}`, customerId?: string) {
     const used = await prisma.settlement.findFirst({ where: { txHash } });
     if (used) throw new HttpError(409, 'This transaction was already used for a payment', 'TX_ALREADY_USED');
 
@@ -142,6 +142,7 @@ export class DirectPayService {
         fxSnapshot: new Prisma.Decimal(1), // ZARK is 1:1 with ZAR
         asset: 'ZARK',
         payer,
+        customerId,
         rail: terms.paymentsContract ? 'MERCHANT_PAYMENTS_CONTRACT' : 'DIRECT_TRANSFER',
         // Ledger records the fee that was actually collected on-chain (ZARK is 1:1 with ZAR)
         platformFee: feeAtomic !== null ? new Prisma.Decimal(formatUnits(feeAtomic, zark.decimals)) : undefined,

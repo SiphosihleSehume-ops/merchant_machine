@@ -7,6 +7,7 @@ export type BusinessAccount = {
   category: string | null;
   walletAddress: string | null;
   verified: boolean;
+  status?: "VERIFIED" | "VERIFYING" | "FAILED" | "NOT_VERIFIED";
   explorerUrl: string | null;
   balance: string; // ZARK, decimal string
 };

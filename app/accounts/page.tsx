@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeftRight, BadgeCheck, ChevronRight, Clock, Store } from "lucide-react";
+import { ArrowLeftRight, BadgeCheck, ChevronRight, CircleCheck, Clock, Loader, Store, XCircle } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
 import { loadAccounts, transferable, zark, type AccountsResponse } from "@/lib/accounts";
 import { shortAddress } from "@/lib/wallet";
@@ -11,11 +11,26 @@ export default function Accounts() {
   const [data, setData] = useState<AccountsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [justAdded, setJustAdded] = useState(false);
+
   useEffect(() => {
     loadAccounts()
       .then(setData)
       .catch((err) => setError(err instanceof Error ? err.message : "Could not load your accounts"));
+    // Confirmation after returning from Add account
+    if (new URLSearchParams(window.location.search).get("added") === "1") {
+      setJustAdded(true);
+      window.history.replaceState(null, "", "/accounts");
+    }
   }, []);
+
+  // While a new account is verifying on-chain, refresh until it's confirmed
+  const verifying = !!data?.accounts.some((a) => a.status === "VERIFYING");
+  useEffect(() => {
+    if (!verifying) return;
+    const t = setInterval(() => loadAccounts().then(setData).catch(() => undefined), 8000);
+    return () => clearInterval(t);
+  }, [verifying]);
 
   const canTransfer = !!data && transferable(data.accounts).length >= 2;
 
@@ -43,6 +58,12 @@ export default function Accounts() {
           )
         )}
 
+        {justAdded && (
+          <div className="alert ok" role="status" style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <CircleCheck size={20} style={{ flex: "none" }} />
+            <span>Account added. It shows as verified once the blockchain confirms (usually under a minute).</span>
+          </div>
+        )}
         {!data && !error && <p className="center-note">Loading accounts…</p>}
         {error && <div className="alert bad" role="alert">{error}</div>}
 
@@ -59,6 +80,10 @@ export default function Accounts() {
                 {a.walletAddress ? shortAddress(a.walletAddress) : "No wallet yet"}
                 {a.verified ? (
                   <span className="pill ok"><BadgeCheck size={12} /> Verified</span>
+                ) : a.status === "VERIFYING" ? (
+                  <span className="pill" style={{ color: "var(--accent)", borderColor: "var(--accent)" }}><Loader size={12} /> Verifying…</span>
+                ) : a.status === "FAILED" ? (
+                  <span className="pill" style={{ color: "var(--bad)" }}><XCircle size={12} /> Verification failed</span>
                 ) : (
                   <span className="pill"><Clock size={12} /> Not verified</span>
                 )}
